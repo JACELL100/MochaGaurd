@@ -1,0 +1,219 @@
+// Contract between the Next.js dashboard and the FastAPI service.
+// Shapes mirror api/app/state.py (Decision.to_dict, evaluate summary, account_view)
+// plus the copilot / anchor responses described in implementation_plan.md.
+
+export type Phase = "pre" | "open" | "closing_ramp" | "closed";
+export type Action = "hold" | "reduce" | "margin_call" | "close" | "freeze";
+
+export interface Decision {
+  id: number | null;
+  ts: string;
+  account_id: string | null;
+  symbol: string | null;
+  action: Action;
+  max_leverage: number | null;
+  adverse_move: number | null;
+  equity: number | null;
+  margin_required: number | null;
+  qty_to_reduce: number | null;
+  reason: string;
+}
+
+export interface Concentration {
+  symbol: string;
+  notional: number;
+  share: number;
+}
+
+export interface HealthBucket {
+  bucket: string;
+  count: number;
+}
+
+export interface BookSummary {
+  ts: string;
+  phase: Phase;
+  ramp: number;
+  accounts: number;
+  positions: number;
+  gross_exposure: number;
+  net_equity: number;
+  worst_case_loss: number;
+  broker_loss_at_p99: number;
+  accounts_at_risk: number;
+  reduce: number;
+  margin_call: number;
+  close: number;
+  frozen_symbols: string[];
+  earnings_tonight: string[];
+  top_concentration: Concentration[];
+  avg_leverage_used: number;
+  margin_health_hist: HealthBucket[];
+  evaluate_ms: number;
+}
+
+export interface BookResponse {
+  summary: BookSummary;
+  ops_brief: string | null;
+  decisions: Decision[];
+}
+
+export interface PositionRow {
+  symbol: string;
+  qty: number;
+  price: number;
+  notional: number;
+  max_leverage: number;
+  adverse_move: number;
+  earnings_tonight: boolean;
+  frozen: boolean;
+}
+
+export interface AccountView {
+  account_id: string;
+  tz: string;
+  display_name: string | null;
+  cash: number;
+  equity: number;
+  margin_required: number;
+  worst_case_loss: number;
+  gross_exposure: number;
+  margin_ratio: number | null;
+  leverage_used: number | null;
+  positions: PositionRow[];
+}
+
+export interface AccountSummary {
+  id: string;
+  display_name: string | null;
+  tz: string;
+  equity: number;
+  status: TonightStatus;
+}
+
+export type TonightStatus = "safe" | "action_needed" | "auto_derisk";
+
+export interface Explanation {
+  decision_id: number | null;
+  symbol: string | null;
+  action: Action;
+  headline: string;
+  body: string;
+  action_hint: string | null;
+  qty_to_reduce: number | null;
+  max_leverage: number | null;
+  model: string;
+}
+
+export interface TonightBriefing {
+  account: AccountView;
+  status: TonightStatus;
+  as_of: string;
+  deadline_et: string;
+  deadline_local: string;
+  local_time: string;
+  headline: string;
+  summary: string;
+  cards: Explanation[];
+  decisions: Decision[];
+  model: string;
+}
+
+export interface ReplayPoint {
+  ts: string;
+  price: number;
+  max_leverage: number;
+  phase: Phase;
+  ramp: number;
+  frozen: boolean;
+}
+
+export type ReplayEventKind =
+  | "freeze"
+  | "ramp_start"
+  | "reduce"
+  | "margin_call"
+  | "close"
+  | "liquidation"
+  | "earnings"
+  | "gap"
+  | "anchor";
+
+export interface ReplayEvent {
+  ts: string;
+  kind: ReplayEventKind;
+  symbol: string | null;
+  account_id: string | null;
+  decision_id: number | null;
+  qty: number | null;
+  fill_price: number | null;
+  slippage_bps: number | null;
+  note: string;
+}
+
+export interface ReplaySummary {
+  date: string;
+  broker_loss: number;
+  avg_leverage: number;
+  liquidations: number;
+  false_liquidations: number;
+  accounts_reduced: number;
+  split_day_liquidations: number;
+  evaluate_ms_p95: number;
+  decisions: number;
+}
+
+export interface ReplayResult {
+  date: string;
+  symbol: string;
+  symbols: string[];
+  points: ReplayPoint[];
+  events: ReplayEvent[];
+  summary: ReplaySummary;
+}
+
+export interface SymbolRisk {
+  symbol: string;
+  gap_p99: number;
+  intraday_p99: number;
+  earnings_gap_p99: number;
+  adv_dollar: number;
+}
+
+export interface LeverageResult {
+  symbol: string;
+  max_leverage: number;
+  adverse_move: number;
+  slippage: number;
+  concentration_haircut: number;
+  phase: Phase;
+  ramp: number;
+  earnings_tonight: boolean;
+  reason: string;
+  frozen: boolean;
+  explanation: string | null;
+  risk: SymbolRisk | null;
+}
+
+export interface VerifyResult {
+  decision_id: number;
+  found: boolean;
+  valid: boolean;
+  anchored: boolean;
+  leaf_hash: string | null;
+  merkle_root: string | null;
+  merkle_path: string[];
+  tx_hash: string | null;
+  contract_address: string | null;
+  etherscan_url: string | null;
+  batch_date: string | null;
+  anchored_at: string | null;
+  decision: Decision | null;
+  error: string | null;
+}
+
+export interface ApiResult<T> {
+  data: T;
+  live: boolean;
+  error: string | null;
+}
