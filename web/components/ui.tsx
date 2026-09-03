@@ -150,8 +150,8 @@ export function SourceBadge({ live, error }: { live: boolean; error?: string | n
       <span className="size-1.5 rounded-full bg-safe" /> Live engine
     </Badge>
   ) : (
-    <Badge tone="warn" title={error ? `FastAPI unreachable: ${error}` : "FastAPI unreachable"}>
-      <span className="size-1.5 rounded-full bg-warn" /> Demo data
+    <Badge tone="danger" title={error ?? "Live service unavailable"}>
+      <span className="size-1.5 rounded-full bg-danger" /> Live data unavailable
     </Badge>
   );
 }

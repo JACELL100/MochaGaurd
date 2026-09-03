@@ -7,7 +7,7 @@ import type { VerifyResult } from "@/lib/types";
 
 export const metadata = { title: "Verify" };
 
-export default async function VerifyPage({ searchParams }: PageProps<"/verify">) {
+export default async function VerifyPage({ searchParams }: { searchParams: Promise<{ id?: string }> }) {
   const { id } = await searchParams;
   const raw = typeof id === "string" ? id.trim().replace(/^#/, "") : "";
   const decisionId = /^\d+$/.test(raw) ? Number(raw) : null;
@@ -52,7 +52,7 @@ export default async function VerifyPage({ searchParams }: PageProps<"/verify">)
         </p>
       </Card>
 
-      {res && <Result r={res.data} />}
+      {res && (res.data ? <Result r={res.data} /> : <Banner tone="danger" icon="!" title="Live verification is unavailable" body={res.error ?? "The API did not return a verification result."} />)}
     </>
   );
 }

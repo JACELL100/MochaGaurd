@@ -78,12 +78,18 @@ def phase_at(ts: datetime) -> Phase:
 
 
 def ramp_fraction(ts: datetime) -> float:
-    '''0.0 at 15:30 ET rising linearly to 1.0 at 16:00. 0.0 in the open session, 1.0 when closed/pre.'''
+    '''Front-loaded 15:30→16:00 overnight-risk ramp (0.0→1.0).
+
+    The engine is deliberately more conservative before the bell: by 15:45, three quarters of
+    overnight risk is reflected rather than only half.  It remains continuous and reaches the
+    complete overnight limit exactly at 16:00.
+    '''
     phase = phase_at(ts)
     if phase == Phase.CLOSING_RAMP:
         et = to_et(ts)
         start = et.replace(hour=15, minute=30, second=0, microsecond=0)
-        return min(1.0, max(0.0, (et - start).total_seconds() / 1800.0))
+        linear = min(1.0, max(0.0, (et - start).total_seconds() / 1800.0))
+        return 1.0 - (1.0 - linear) ** 2
     return 0.0 if phase == Phase.OPEN else 1.0
 
 

@@ -1,25 +1,31 @@
 import { Badge, PageHeader, SourceBadge, Stat, buttonClass, inputClass } from "@/components/ui";
 import { getReplay } from "@/lib/api";
-import { compactMoney, int, lev } from "@/lib/format";
+import { int, lev, money, pct } from "@/lib/format";
 
 import { ReplayTimeline } from "./ReplayTimeline";
 
 export const metadata = { title: "Replay" };
 
-export default async function ReplayPage({ searchParams }: PageProps<"/replay">) {
+export default async function ReplayPage({ searchParams }: { searchParams: Promise<{ symbol?: string; date?: string }> }) {
   const sp = await searchParams;
   const symbol = (typeof sp.symbol === "string" && sp.symbol.trim().toUpperCase()) || "NVDA";
   const date = typeof sp.date === "string" && sp.date ? sp.date : undefined;
 
   const { data, live, error } = await getReplay({ symbol, date });
+  if (!data) {
+    return <>
+      <PageHeader title="Historical risk review" subtitle="Current risk rules applied only to persisted Alpha Vantage bars." right={<SourceBadge live={false} error={error} />} />
+      <p className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted">{error ?? "No real intraday history is available."}</p>
+    </>;
+  }
   const s = data.summary;
   const symbols = data.symbols.length ? data.symbols : [data.symbol];
 
   return (
     <>
       <PageHeader
-        title="Replay"
-        subtitle="Simulated clock threaded through the engine. No wall-clock, no look-ahead: prices are filtered to ts ≤ now."
+        title="Historical risk review"
+        subtitle="Current risk rules applied to persisted, actual Alpha Vantage bars. This view never simulates prices or trades."
         right={
           <>
             <form method="get" className="flex items-center gap-2">
@@ -41,28 +47,18 @@ export default async function ReplayPage({ searchParams }: PageProps<"/replay">)
       />
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Stat label="Broker loss" value={compactMoney(s.broker_loss)} hint="after slippage-modelled unwinds" tone={s.broker_loss > 0 ? "danger" : "safe"} />
-        <Stat label="Avg leverage" value={lev(s.avg_leverage)} hint="capital efficiency, not safe-and-useless" />
-        <Stat label="Liquidations" value={int(s.liquidations)} hint={`${int(s.accounts_reduced)} accounts trimmed at 15:45`} />
-        <Stat
-          label="False liquidations"
-          value={int(s.false_liquidations)}
-          hint="closed positions that would have recovered"
-          tone={s.false_liquidations === 0 ? "safe" : "warn"}
-        />
-        <Stat
-          label="Split-day liquidations"
-          value={int(s.split_day_liquidations)}
-          hint={s.split_day_liquidations === 0 ? "guard held: day qualifies" : "DISQUALIFIED"}
-          tone={s.split_day_liquidations === 0 ? "safe" : "danger"}
-        />
-        <Stat label="evaluate p95" value={`${s.evaluate_ms_p95.toFixed(0)} ms`} hint={`${int(s.decisions)} decisions logged`} tone={s.evaluate_ms_p95 < 100 ? "safe" : "danger"} />
+        <Stat label="Actual bars" value={int(s.bars)} hint="persisted from Alpha Vantage" />
+        <Stat label="Open" value={money(s.open_price, true)} hint="first persisted bar" />
+        <Stat label="Close" value={money(s.close_price, true)} hint="last persisted bar" />
+        <Stat label="Session move" value={pct(s.price_change, 2)} hint="actual bar-to-bar change" tone={s.price_change < 0 ? "danger" : "safe"} />
+        <Stat label="Minimum allowed lev" value={lev(s.min_allowed_leverage)} hint="for a $10k reference position" tone="warn" />
+        <Stat label="Close allowed lev" value={lev(s.close_allowed_leverage)} hint="under current risk rules" tone="accent" />
       </div>
 
       <ReplayTimeline replay={data} />
 
       <p className="mt-4 text-xs text-muted">
-        <Badge tone="neutral">{data.points.length} bars</Badge> five-minute resolution across the session close and the next open.
+        <Badge tone="neutral">{data.points.length} bars</Badge> actual persisted intraday prints; availability depends on the live quote history already ingested.
       </p>
     </>
   );

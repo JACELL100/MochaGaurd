@@ -9,6 +9,9 @@ export const metadata = { title: "Book console" };
 
 export default async function BookConsole() {
   const { data, live, error } = await getBook();
+  if (!data) {
+    return <Unavailable title="Book risk console" error={error} />;
+  }
   const s = data.summary;
   const actionable = data.decisions.filter((d) => d.action !== "hold");
   const brokerLossShare = s.gross_exposure ? s.broker_loss_at_p99 / s.gross_exposure : 0;
@@ -167,6 +170,15 @@ export default async function BookConsole() {
           <Empty>Every account holds. Nothing to do tonight.</Empty>
         )}
       </Card>
+    </>
+  );
+}
+
+function Unavailable({ title, error }: { title: string; error: string | null }) {
+  return (
+    <>
+      <PageHeader title={title} subtitle="Live, staff-only book risk monitoring." right={<SourceBadge live={false} error={error} />} />
+      <Empty>{error ?? "The live risk service is unavailable."} <Link href="/login" className="text-accent hover:underline">Sign in</Link></Empty>
     </>
   );
 }

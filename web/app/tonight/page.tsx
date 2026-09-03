@@ -21,10 +21,10 @@ import { AccountPicker } from "./AccountPicker";
 
 export const metadata = { title: "Tonight" };
 
-export default async function TonightPage({ searchParams }: PageProps<"/tonight">) {
+export default async function TonightPage({ searchParams }: { searchParams: Promise<{ account?: string }> }) {
   const { account } = await searchParams;
   const accountsRes = await getAccounts();
-  const accounts = accountsRes.data;
+  const accounts = accountsRes.data ?? [];
 
   const requested = typeof account === "string" ? account : undefined;
   const fallback = accounts.find((a) => a.status !== "safe") ?? accounts[0];

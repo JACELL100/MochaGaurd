@@ -153,14 +153,12 @@ export interface ReplayEvent {
 
 export interface ReplaySummary {
   date: string;
-  broker_loss: number;
-  avg_leverage: number;
-  liquidations: number;
-  false_liquidations: number;
-  accounts_reduced: number;
-  split_day_liquidations: number;
-  evaluate_ms_p95: number;
-  decisions: number;
+  bars: number;
+  open_price: number;
+  close_price: number;
+  price_change: number;
+  min_allowed_leverage: number;
+  close_allowed_leverage: number;
 }
 
 export interface ReplayResult {
@@ -213,7 +211,7 @@ export interface VerifyResult {
 }
 
 export interface ApiResult<T> {
-  data: T;
+  data: T | null;
   live: boolean;
   error: string | null;
 }

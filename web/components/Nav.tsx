@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/replay", label: "Replay" },
   { href: "/simulate", label: "Simulate" },
   { href: "/verify", label: "Verify" },
+  { href: "/markets", label: "Markets" },
 ] as const;
 
 export function Nav() {

@@ -71,7 +71,7 @@ export function ReplayTimeline({ replay }: { replay: ReplayResult }) {
     <div className="space-y-4">
       <Card
         title={`${replay.symbol} · ${replay.date}`}
-        subtitle="Price (left) and allowed leverage (right). Leverage ramps down from 15:30 into the overnight limit."
+        subtitle="Actual price bars (left) with the current permitted leverage rule (right)."
         action={
           <div className="flex items-center gap-2">
             <button type="button" className={ghostButtonClass} onClick={() => setPlaying((p) => !p)}>
@@ -147,7 +147,7 @@ export function ReplayTimeline({ replay }: { replay: ReplayResult }) {
 
         <Card
           title="Timeline"
-          subtitle="Click an event to jump. Liquidations link straight to on-chain verification."
+          subtitle="Recorded market-session events only. This historical view does not create or replay trades."
           className="lg:col-span-2"
         >
           <ol className="relative space-y-1 border-l border-border pl-4">
@@ -189,12 +189,7 @@ export function ReplayTimeline({ replay }: { replay: ReplayResult }) {
               );
             })}
           </ol>
-          <p className="mt-4 text-xs text-muted">
-            Ten seconds to the closer: pick a liquidation, hit verify, open the Etherscan tab.{" "}
-            <Link href="/verify" className="text-accent hover:underline">
-              Verify page →
-            </Link>
-          </p>
+          <p className="mt-4 text-xs text-muted">Every displayed price came from the persisted live data feed.</p>
         </Card>
       </div>
     </div>

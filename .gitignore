@@ -15,6 +15,7 @@ api/data/raw/
 # node / next
 node_modules/
 .next/
+.next-*/
 out/
 
 # misc

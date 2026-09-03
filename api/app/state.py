@@ -182,6 +182,30 @@ class BookState:
                     price[i] = d.close[k]
         return price, price_ts
 
+    def apply_quote(self, symbol: str, price: float, ts: datetime, volume: float = 0.0) -> bool:
+        '''Append a live print to the intraday series (called by the quote poller, never by the engine).'''
+        if symbol not in self.sym_idx or price <= 0:
+            return False
+        ts_ns = int(ts.timestamp() * 1e9)
+        s = self.intraday.get(symbol)
+        if s is None or len(s.ts_ns) == 0:
+            self.intraday[symbol] = IntradaySeries(np.array([ts_ns], dtype=np.int64), np.array([price], dtype=float),
+                                                   np.array([volume], dtype=float))
+            return True
+        if ts_ns <= int(s.ts_ns[-1]):
+            return False
+        self.intraday[symbol] = IntradaySeries(np.append(s.ts_ns, ts_ns), np.append(s.price, price),
+                                               np.append(s.volume, volume))
+        return True
+
+    def held_symbols(self) -> list[str]:
+        '''Symbols with at least one open position, largest gross notional first.'''
+        if len(self.pos_sym) == 0:
+            return []
+        notional = np.bincount(self.pos_sym, weights=np.abs(self.pos_qty) * self.last_close[self.pos_sym],
+                               minlength=len(self.symbols))
+        return [self.symbols[i] for i in np.argsort(notional)[::-1] if notional[i] > 0]
+
     # ------------------------------------------------------------------ single-symbol leverage
     def symbol_risk(self, symbol: str) -> leverage.SymbolRisk:
         i = self.sym_idx[symbol]
@@ -255,6 +279,17 @@ class BookState:
         counts = {'reduce': 0, 'margin_call': 0, 'close': 0}
         for a in np.nonzero(flagged)[0]:
             idx = self.positions_of(int(a))
+            acct_id = self.accounts[a].id
+            # The vectorized pass has already established equity. An insolvent account receives
+            # one account-level close mandate; the execution service expands it against its
+            # authoritative position ledger. This avoids manufacturing a separate risk decision
+            # for every leg while keeping the hot whole-book path under 100 ms.
+            if equity[a] <= 0:
+                counts['close'] += 1
+                reason = f'equity={equity[a]:.0f}<=0 gross={gross[a]:.0f}'
+                decisions.append(Decision(ts, acct_id, None, 'close', None, None, float(equity[a]),
+                                          float(margin_req[a]), None, reason))
+                continue
             views = [margin.PositionView(self.symbols[ps[j]], float(self.pos_qty[j]), float(px[j]),
                                          float(adverse[ps[j]]), float(maxlev[j]), bool(frozen[ps[j]]))
                      for j in idx]
@@ -262,17 +297,15 @@ class BookState:
             if p.action == 'hold':
                 continue
             counts[p.action] += 1
-            acct_id = self.accounts[a].id
             if not p.reductions:
-                decisions.append(Decision(ts, acct_id, None, p.action, None, None, round(p.equity, 2),
-                                          round(p.margin_required, 2), None, p.reason))
+                decisions.append(Decision(ts, acct_id, None, p.action, None, None, p.equity,
+                                          p.margin_required, None, p.reason))
             for v in views:
                 q = p.reductions.get(v.symbol)
                 if not q:
                     continue
-                decisions.append(Decision(ts, acct_id, v.symbol, p.action, round(v.max_leverage, 2),
-                                          round(v.adverse, 4), round(p.equity, 2),
-                                          round(p.margin_required, 2), round(q, 4), p.reason))
+                decisions.append(Decision(ts, acct_id, v.symbol, p.action, v.max_leverage,
+                                          v.adverse, p.equity, p.margin_required, q, p.reason))
 
         conc = np.bincount(ps, weights=notional, minlength=n_sym)
         total_gross = float(conc.sum())

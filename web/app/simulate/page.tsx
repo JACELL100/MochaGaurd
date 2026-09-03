@@ -1,11 +1,15 @@
-import { LeverageCurve } from "@/components/charts/LeverageCurve";
 import { Badge, Card, Empty, Mono, PageHeader, SourceBadge, Stat, buttonClass, inputClass } from "@/components/ui";
 import { getLeverage } from "@/lib/api";
-import { DEMO_DAY, DEMO_SYMBOLS } from "@/lib/demo";
 import { etWallClock } from "@/lib/engine";
 import { etDateTime, lev, money, pct, phaseLabel } from "@/lib/format";
 
 export const metadata = { title: "Simulate" };
+
+function currentEtDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
 
 const PRESETS: Array<{ label: string; time: string }> = [
   { label: "Open 09:30", time: "09:30" },
@@ -14,11 +18,11 @@ const PRESETS: Array<{ label: string; time: string }> = [
   { label: "Closed 16:30", time: "16:30" },
 ];
 
-export default async function SimulatePage({ searchParams }: PageProps<"/simulate">) {
+export default async function SimulatePage({ searchParams }: { searchParams: Promise<{ symbol?: string; notional?: string; date?: string; time?: string; earnings?: string }> }) {
   const sp = await searchParams;
   const symbol = (typeof sp.symbol === "string" && sp.symbol.trim().toUpperCase()) || "NVDA";
   const notional = Math.max(0, Number(typeof sp.notional === "string" ? sp.notional : "") || 50_000);
-  const date = typeof sp.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : DEMO_DAY;
+  const date = typeof sp.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : currentEtDate();
   const time = typeof sp.time === "string" && /^\d{2}:\d{2}$/.test(sp.time) ? sp.time : "15:45";
   const earningsParam = typeof sp.earnings === "string" ? sp.earnings : undefined;
   const earnings = earningsParam === "1" ? true : earningsParam === "0" ? false : undefined;
@@ -26,13 +30,12 @@ export default async function SimulatePage({ searchParams }: PageProps<"/simulat
   const ts = etWallClock(date, time);
   const { data: r, live, error } = await getLeverage({ symbol, notional, ts, earnings_tonight: earnings });
   const cursorMinutes = Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
-  const symbols = DEMO_SYMBOLS.includes(symbol) ? DEMO_SYMBOLS : [symbol, ...DEMO_SYMBOLS];
 
   return (
     <>
       <PageHeader
-        title="Leverage simulator"
-        subtitle="max_leverage = SAFETY / (adverse_move + slippage), haircut for concentration, capped at 20x."
+        title="Live leverage check"
+        subtitle="Live, precomputed risk statistics; no simulated prices or fallback values."
         right={<SourceBadge live={live} error={error} />}
       />
 
@@ -41,13 +44,7 @@ export default async function SimulatePage({ searchParams }: PageProps<"/simulat
           <form method="get" className="space-y-4 text-sm">
             <label className="block text-muted">
               Symbol
-              <select name="symbol" defaultValue={symbol} className={`${inputClass} mt-1`}>
-                {symbols.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+              <input name="symbol" defaultValue={symbol} className={`${inputClass} mt-1 font-mono`} autoComplete="off" />
             </label>
             <label className="block text-muted">
               Position size (USD notional)
@@ -130,14 +127,14 @@ export default async function SimulatePage({ searchParams }: PageProps<"/simulat
                 <Stat label="Safety budget" value="0.80" hint="tuned against replay broker loss" tone="accent" />
               </div>
 
-              {r.risk && (
-                <Card
-                  title="Allowed leverage across the session"
-                  subtitle={`Same symbol and size, every 5 minutes. gap p99 ${pct(r.risk.gap_p99, 1)} · intraday p99 ${pct(r.risk.intraday_p99, 1)} · earnings gap p99 ${pct(r.risk.earnings_gap_p99, 0)}`}
-                >
-                  <LeverageCurve risk={r.risk} notional={notional} earningsTonight={r.earnings_tonight} date={date} cursorMinutes={cursorMinutes} />
-                </Card>
-              )}
+              {r.risk && <Card title="Live risk profile" subtitle="Computed from split-adjusted Alpha Vantage price history already loaded into the risk service.">
+                <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+                  <Stat label="Gap p99" value={pct(r.risk.gap_p99, 1)} />
+                  <Stat label="Intraday p99" value={pct(r.risk.intraday_p99, 1)} />
+                  <Stat label="Earnings-gap p99" value={pct(r.risk.earnings_gap_p99, 1)} />
+                  <Stat label="ADV$" value={money(r.risk.adv_dollar)} />
+                </div>
+              </Card>}
 
               <Card title="Engine reason string" subtitle="This is what the copilot narrates. Every number in the explanation must appear here.">
                 <Mono className="block whitespace-pre-wrap break-all">{r.reason}</Mono>
