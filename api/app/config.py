@@ -17,12 +17,13 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 3.0
     max_llm_explanations_per_run: int = 20
 
-    # --- market data (Alpha Vantage)
+    # --- market data (Alpha Vantage primary; yfinance quote/history fallback)
     alpha_vantage_api_key: str = ''
     alpha_vantage_premium: bool = False
     av_calls_per_minute: int = 5          # free tier: 25/day. premium: 75+/min
     av_daily_budget: int = 25             # stop hitting the API when the day's budget is spent
     quote_poll_seconds: int = 60          # 0 disables the intraday quote poller
+    yfinance_enabled: bool = True
     universe: str = ('SPY,QQQ,IWM,AAPL,MSFT,NVDA,TSLA,AMZN,META,GOOGL,AMD,COIN,MSTR,PLTR,'
                      'SMCI,GME,CRM,COST,GLD,SLV,USO,XBI,SOFI,RIVN')
 

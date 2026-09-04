@@ -36,6 +36,16 @@ class PremiumRequired(AVError):
     pass
 
 
+def _provider_error(message: str) -> AVError:
+    """Never pass provider text through to a browser: it can echo the API key."""
+    low = message.lower()
+    if 'premium' in low:
+        return PremiumRequired('Alpha Vantage premium access is required for this request')
+    if 'rate limit' in low or 'requests per day' in low or 'call frequency' in low:
+        return QuotaExceeded('Alpha Vantage daily quota is exhausted')
+    return AVError('Alpha Vantage rejected this request')
+
+
 @dataclass
 class Quote:
     symbol: str
@@ -99,13 +109,10 @@ class AlphaVantage:
         if isinstance(data, dict):
             msg = data.get('Information') or data.get('Note') or data.get('Error Message')
             if msg:
-                low = msg.lower()
-                if 'premium' in low:
-                    raise PremiumRequired(msg)
-                if 'rate limit' in low or 'requests per day' in low or 'call frequency' in low:
+                error = _provider_error(str(msg))
+                if isinstance(error, QuotaExceeded):
                     self._exhausted_for = datetime.now(tz=timezone.utc).date()
-                    raise QuotaExceeded(msg)
-                raise AVError(msg)
+                raise error
         return data
 
     # ------------------------------------------------------------------ daily bars

@@ -37,7 +37,7 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
   const result = submitted ? await getMarket(kind, query) : null;
   return (
     <>
-      <PageHeader title="Live market data" subtitle="Live Alpha Vantage responses only. Provider availability, latency and entitlement depend on your plan." right={result && <SourceBadge live={result.live} error={result.error} />} />
+      <PageHeader title="Live market data" subtitle="Alpha Vantage is primary; Yahoo Finance provides no-key quote/history fallback when its quota is unavailable." right={result && <SourceBadge live={result.live} error={result.error} />} />
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
         <Card title="Query Alpha Vantage" subtitle="Choose a real data product and submit it through the authenticated Mochatrade API.">
           <form method="get" className="space-y-3 text-sm">

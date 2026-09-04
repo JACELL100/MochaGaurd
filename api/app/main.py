@@ -21,10 +21,11 @@ from .anchor import publisher
 from .auth import Principal, SupabaseAuth, get_principal
 from .config import settings
 from .copilot import service as copilot
-from .data.alpha_vantage import AlphaVantage, AVError
+from .data.alpha_vantage import AlphaVantage, AVError, QuotaExceeded
 from .data.loader import load_book
 from .data.poller import QuotePoller
 from .data.precompute import compute_all
+from .data.yfinance import YFinance, YFinanceError
 from .engine import calendar as cal
 from .engine import leverage as leverage_engine
 
@@ -92,6 +93,7 @@ class LiveService:
         self.latest = None
         self.auth = SupabaseAuth()
         self.av: AlphaVantage | None = None
+        self.yf: YFinance | None = None
         self.poller: QuotePoller | None = None
         self.tasks: list[asyncio.Task] = []
         self._reload_lock = asyncio.Lock()
@@ -106,7 +108,10 @@ class LiveService:
         self.book = await load_book()
         if settings.alpha_vantage_api_key:
             self.av = AlphaVantage()
-            self.poller = QuotePoller(lambda: self.book, self.av)
+        if settings.yfinance_enabled:
+            self.yf = YFinance()
+        if self.av or self.yf:
+            self.poller = QuotePoller(lambda: self.book, self.av, self.yf)
         if settings.scheduler_enabled:
             if self.poller:
                 self.tasks.append(asyncio.create_task(self.poller.run(), name='quote-poller'))
@@ -200,8 +205,6 @@ class LiveService:
         return account
 
     async def refresh_market(self, symbols: list[str] | None, include_earnings: bool) -> dict:
-        if not self.av:
-            raise HTTPException(status_code=503, detail='ALPHA_VANTAGE_API_KEY is not configured')
         requested = [s.upper().strip() for s in (symbols or settings.symbols) if s and s.strip()]
         if not requested:
             raise HTTPException(status_code=422, detail='At least one symbol is required')
@@ -209,20 +212,40 @@ class LiveService:
         bars_count = 0
         earnings_count = 0
         actions_count = 0
+        sources: dict[str, str] = {}
         for symbol in requested:
-            bars = await self.av.daily(symbol, full=True)
+            try:
+                if self.av is None:
+                    raise QuotaExceeded('Alpha Vantage is not configured')
+                bars = await self.av.daily(symbol, full=True)
+                splits = await self.av.splits(symbol)
+                sources[symbol] = 'alpha_vantage'
+            except (AVError, QuotaExceeded) as exc:
+                if self.yf is None:
+                    raise HTTPException(status_code=503, detail=str(exc)) from exc
+                log.warning('%s: Alpha Vantage unavailable (%s); using Yahoo Finance history', symbol, exc)
+                try:
+                    bars = await self.yf.daily(symbol)
+                    splits = await self.yf.splits(symbol)
+                except YFinanceError as yf_exc:
+                    raise HTTPException(status_code=503, detail=f'Market-data providers are unavailable: {yf_exc}') from yf_exc
+                sources[symbol] = 'yfinance'
             bars_count += await db.upsert_bars_daily(symbol, bars)
-            splits = await self.av.splits(symbol)
             actions_count += len(splits)
             await db.upsert_corporate_actions(symbol, splits)
-            if include_earnings:
-                earnings = await self.av.earnings_history(symbol)
-                earnings_count += len(earnings)
-                await db.upsert_earnings(symbol, earnings)
+            if include_earnings and self.av is not None and sources[symbol] == 'alpha_vantage':
+                try:
+                    earnings = await self.av.earnings_history(symbol)
+                    earnings_count += len(earnings)
+                    await db.upsert_earnings(symbol, earnings)
+                except AVError as exc:
+                    # yfinance does not provide a like-for-like report-time history. Keep prior
+                    # earnings data and still refresh the price/risk side of the book.
+                    log.warning('%s: Alpha Vantage earnings unavailable (%s); retaining existing earnings', symbol, exc)
         risks = await compute_all(requested)
         await self.reload_book()
         return {'symbols': requested, 'daily_bars_written': bars_count, 'earnings_written': earnings_count,
-                'corporate_actions_written': actions_count, 'risk_rows_computed': len(risks)}
+                'corporate_actions_written': actions_count, 'risk_rows_computed': len(risks), 'sources': sources}
 
 
 @asynccontextmanager
@@ -267,7 +290,7 @@ def account_status(result, account_id: str) -> str:
 async def health(request: Request):
     service = service_of(request)
     return {'ok': True, 'database': settings.db_configured, 'market_loaded': bool(service.book and service.book.symbols),
-            'alpha_vantage': bool(service.av), 'chain_configured': settings.chain_configured}
+            'alpha_vantage': bool(service.av), 'yfinance': bool(service.yf), 'chain_configured': settings.chain_configured}
 
 
 @app.get('/me')
@@ -419,14 +442,23 @@ async def market_symbols(request: Request, _: Annotated[Principal, Depends(get_p
 @app.get('/market/{kind}')
 async def market(kind: str, request: Request, principal: Annotated[Principal, Depends(get_principal)]):
     service = service_of(request)
-    if not service.av:
-        raise HTTPException(status_code=503, detail='ALPHA_VANTAGE_API_KEY is not configured')
     query = dict(request.query_params)
     try:
-        return {'source': 'alpha_vantage', 'retrieved_at': datetime.now(tz=timezone.utc).isoformat(),
-                'data': await service.av.market_query(kind, **query)}
-    except (ValueError, AVError) as exc:
+        if service.av is None:
+            raise QuotaExceeded('Alpha Vantage is not configured')
+        data = await service.av.market_query(kind, **query)
+        source = 'alpha_vantage'
+    except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except AVError as exc:
+        if service.yf is None:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        try:
+            data = await service.yf.market_query(kind, **query)
+            source = 'yfinance'
+        except YFinanceError as yf_exc:
+            raise HTTPException(status_code=503, detail=f'Live market data unavailable: {yf_exc}') from yf_exc
+    return {'source': source, 'retrieved_at': datetime.now(tz=timezone.utc).isoformat(), 'data': data}
 
 
 @app.post('/admin/market/refresh')

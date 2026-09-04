@@ -15,14 +15,16 @@ from .. import db
 from ..config import settings
 from ..engine import calendar as cal
 from .alpha_vantage import AlphaVantage, AVError, QuotaExceeded
+from .yfinance import YFinance, YFinanceError
 
 log = logging.getLogger('mochaguard.poller')
 
 
 class QuotePoller:
-    def __init__(self, get_book, av: AlphaVantage):
+    def __init__(self, get_book, av: AlphaVantage | None, yf: YFinance | None = None):
         self.get_book = get_book
         self.av = av
+        self.yf = yf
         self._rr = 0
         self.last_tick: datetime | None = None
         self.last_error: str | None = None
@@ -35,11 +37,6 @@ class QuotePoller:
         while True:
             try:
                 await self.tick()
-            except QuotaExceeded as e:
-                self.last_error = str(e)
-                log.warning('poller paused: %s', e)
-                await asyncio.sleep(3600)
-                continue
             except Exception as e:  # noqa: BLE001 - keep the service alive
                 self.last_error = str(e)
                 log.exception('poller tick failed')
@@ -54,13 +51,24 @@ class QuotePoller:
         if book is None or not book.symbols:
             return
         symbols = book.held_symbols() or book.symbols
-        if settings.alpha_vantage_premium:
-            quotes = await self.av.bulk_quotes(book.symbols)
-        else:
-            sym = symbols[self._rr % len(symbols)]
-            self._rr += 1
-            q = await self.av.quote(sym)
+        sym = symbols[self._rr % len(symbols)]
+        self._rr += 1
+        source = 'alpha_vantage_quote'
+        try:
+            if self.av is None:
+                raise QuotaExceeded('Alpha Vantage is not configured')
+            if settings.alpha_vantage_premium:
+                quotes = await self.av.bulk_quotes(book.symbols)
+            else:
+                q = await self.av.quote(sym)
+                quotes = [q] if q else []
+        except (AVError, QuotaExceeded) as exc:
+            if self.yf is None:
+                raise
+            log.info('Alpha Vantage quote unavailable (%s); using Yahoo Finance fallback', exc)
+            q = await self.yf.quote(sym)
             quotes = [q] if q else []
+            source = 'yfinance_quote'
         rows_by_symbol: dict[str, list[dict]] = {}
         for q in quotes:
             ts = q.ts.replace(second=0, microsecond=0)
@@ -69,7 +77,7 @@ class QuotePoller:
                 self.prints += 1
         for sym, rows in rows_by_symbol.items():
             try:
-                await db.upsert_bars_intraday(sym, rows, source='alpha_vantage_quote')
+                await db.upsert_bars_intraday(sym, rows, source=source)
             except Exception:  # noqa: BLE001
                 log.exception('failed to persist quote for %s', sym)
         self.last_tick = now

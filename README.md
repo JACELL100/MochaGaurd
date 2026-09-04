@@ -37,7 +37,9 @@ npm install
 npm run dev
 ```
 
-`seed_market.py` consumes Alpha Vantage quota for daily bars, splits, and earnings. On a free key, seed a deliberately small universe; configure premium rate and daily-budget settings for broad live coverage. The quote poller writes actual intraday prints during market hours, and historical review only displays those persisted prints.
+Alpha Vantage is the preferred source for earnings, corporate actions, and its market explorer. yfinance requires no key and automatically falls back for daily history and live quote polling if the Alpha Vantage quota is exhausted. On a free Alpha Vantage key, seed a deliberately small universe; configure premium rate and daily-budget settings for broad live coverage. The quote poller writes actual intraday prints during market hours, and historical review only displays those persisted prints.
+
+The dashboard identifies each market-explorer response as `alpha_vantage` or `yfinance`. Yahoo Finance is a convenient no-key fallback for this hackathon deployment, not a contractual real-time data feed.
 
 ## Brokerage account integration
 
