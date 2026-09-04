@@ -41,6 +41,7 @@ export function shares(v: number | null | undefined): string {
 
 export function timeIn(ts: string | Date, tz: string, withZone = true): string {
   const d = typeof ts === "string" ? new Date(ts) : ts;
+  if (Number.isNaN(d.getTime())) return "–";
   try {
     return new Intl.DateTimeFormat("en-US", {
       timeZone: tz,
@@ -55,6 +56,7 @@ export function timeIn(ts: string | Date, tz: string, withZone = true): string {
 
 export function dateTimeIn(ts: string | Date, tz: string): string {
   const d = typeof ts === "string" ? new Date(ts) : ts;
+  if (Number.isNaN(d.getTime())) return "–";
   try {
     return new Intl.DateTimeFormat("en-US", {
       timeZone: tz,

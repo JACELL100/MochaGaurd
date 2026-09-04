@@ -5,7 +5,6 @@ import { getAccounts, getTonight } from "@/lib/api";
 import {
   actionLabel,
   actionTone,
-  dateTimeIn,
   etTime,
   lev,
   money,
@@ -86,7 +85,7 @@ function Briefing({ b }: { b: NonNullable<Awaited<ReturnType<typeof getTonight>>
             </div>
             <div className="tabular mt-1 text-lg font-semibold">{b.local_time} local</div>
             <div className="mt-0.5 text-xs text-muted">
-              {etTime(b.as_of)} in New York · deadline {b.deadline_local} ({etTime(b.deadline_et)})
+              {etTime(b.as_of)} in New York · deadline {b.deadline_local} ({b.deadline_et})
             </div>
           </div>
         }
@@ -107,7 +106,7 @@ function Briefing({ b }: { b: NonNullable<Awaited<ReturnType<typeof getTonight>>
           hint={`${pct(a.worst_case_loss / Math.max(a.equity, 1), 0)} of equity at p99`}
           tone={a.worst_case_loss >= a.equity ? "danger" : "warn"}
         />
-        <Stat label="Deadline" value={b.deadline_local} hint={dateTimeIn(b.deadline_et, a.tz)} tone="accent" />
+        <Stat label="Deadline" value={b.deadline_local} hint={b.deadline_et} tone="accent" />
       </div>
 
       {actionable.length > 0 && (
