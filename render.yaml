@@ -17,7 +17,9 @@ services:
       # scheduler as a reliable always-on worker. Trigger evaluation via the API
       # or use a paid worker before relying on unattended monitoring.
       - key: SCHEDULER_ENABLED
-        value: "false"
+        value: "true"
+      - key: INTRADAY_BACKFILL_ON_START
+        value: "true"
       - key: PYTHON_VERSION
         value: "3.11.4"
       - key: DATABASE_URL

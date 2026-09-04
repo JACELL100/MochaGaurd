@@ -32,6 +32,32 @@ class YFinance:
     async def daily(self, symbol: str, period: str = '5y') -> list[dict]:
         return await asyncio.to_thread(self._daily, symbol, period)
 
+    async def intraday(self, symbol: str, period: str = '60d', interval: str = '5m') -> list[dict]:
+        return await asyncio.to_thread(self._intraday, symbol, period, interval)
+
+    @staticmethod
+    def _intraday(symbol: str, period: str, interval: str) -> list[dict]:
+        try:
+            frame = yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=False,
+                                              prepost=False, actions=False, raise_errors=False)
+        except Exception as exc:
+            raise YFinanceError(f'Yahoo Finance intraday history lookup failed for {symbol}') from exc
+        if frame is None or frame.empty:
+            raise YFinanceError(f'Yahoo Finance returned no intraday history for {symbol}')
+        out = []
+        for index, row in frame.iterrows():
+            close = _number(row, 'Close')
+            if close <= 0 or not hasattr(index, 'to_pydatetime'):
+                continue
+            ts = index.to_pydatetime()
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            out.append({'ts': ts, 'open': _number(row, 'Open', close), 'high': _number(row, 'High', close),
+                        'low': _number(row, 'Low', close), 'close': close, 'volume': _number(row, 'Volume')})
+        if not out:
+            raise YFinanceError(f'Yahoo Finance returned no usable intraday history for {symbol}')
+        return out
+
     @staticmethod
     def _daily(symbol: str, period: str) -> list[dict]:
         try:

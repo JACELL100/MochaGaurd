@@ -14,7 +14,7 @@ export default async function ReplayPage({ searchParams }: { searchParams: Promi
   const { data, live, error } = await getReplay({ symbol, date });
   if (!data) {
     return <>
-      <PageHeader title="Historical risk review" subtitle="Current risk rules applied only to persisted Alpha Vantage bars." right={<SourceBadge live={false} error={error} />} />
+      <PageHeader title="Historical risk review" subtitle="Current risk rules applied only to persisted real market bars." right={<SourceBadge live={false} error={error} />} />
       <p className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted">{error ?? "No real intraday history is available."}</p>
     </>;
   }
@@ -25,7 +25,7 @@ export default async function ReplayPage({ searchParams }: { searchParams: Promi
     <>
       <PageHeader
         title="Historical risk review"
-        subtitle="Current risk rules applied to persisted, actual Alpha Vantage bars. This view never simulates prices or trades."
+        subtitle="Current risk rules applied to persisted, actual market bars. This view never simulates prices or trades."
         right={
           <>
             <form method="get" className="flex items-center gap-2">
@@ -58,7 +58,7 @@ export default async function ReplayPage({ searchParams }: { searchParams: Promi
       <ReplayTimeline replay={data} />
 
       <p className="mt-4 text-xs text-muted">
-        <Badge tone="neutral">{data.points.length} bars</Badge> actual persisted intraday prints; availability depends on the live quote history already ingested.
+        <Badge tone="neutral">{data.points.length} bars</Badge> actual persisted intraday prints from the configured market providers.
       </p>
     </>
   );

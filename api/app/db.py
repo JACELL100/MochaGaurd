@@ -127,6 +127,10 @@ async def intraday_between(start: datetime, end: datetime, symbols: list[str] | 
     return out
 
 
+async def intraday_count() -> int:
+    return await pool().fetchval('select count(*) from bars_intraday') or 0
+
+
 async def upsert_earnings(symbol: str, rows: list[dict]) -> None:
     if not rows:
         return

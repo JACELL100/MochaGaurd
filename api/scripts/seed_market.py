@@ -16,7 +16,7 @@ from app import db
 from app.config import settings
 from app.data.alpha_vantage import AVError, AlphaVantage, QuotaExceeded
 from app.data.precompute import compute_all
-from app.data.yfinance import YFinance
+from app.data.yfinance import YFinance, YFinanceError
 
 
 async def main(symbols: list[str], include_earnings: bool) -> None:
@@ -27,6 +27,7 @@ async def main(symbols: list[str], include_earnings: bool) -> None:
     yf = YFinance() if settings.yfinance_enabled else None
     try:
         await db.upsert_symbols([{'symbol': symbol, 'asset_type': 'equity'} for symbol in symbols])
+        intraday_count = 0
         for symbol in symbols:
             try:
                 if av is None:
@@ -42,6 +43,25 @@ async def main(symbols: list[str], include_earnings: bool) -> None:
                 source = 'Yahoo Finance'
             print(f'Fetching {symbol} daily adjusted history from {source}...')
             await db.upsert_bars_daily(symbol, bars)
+            try:
+                if av is not None and settings.alpha_vantage_premium:
+                    try:
+                        intraday = await av.intraday(symbol, interval='5min', full=True)
+                        intraday_source = 'alpha_vantage'
+                    except (AVError, QuotaExceeded):
+                        if yf is None:
+                            raise
+                        intraday = await yf.intraday(symbol)
+                        intraday_source = 'yfinance'
+                elif yf is not None:
+                    intraday = await yf.intraday(symbol)
+                    intraday_source = 'yfinance'
+                else:
+                    intraday = []
+                    intraday_source = 'none'
+                intraday_count += await db.upsert_bars_intraday(symbol, intraday, source=intraday_source)
+            except (AVError, QuotaExceeded, YFinanceError) as exc:
+                print(f'{symbol}: intraday history unavailable ({exc}); continuing.')
             await db.upsert_corporate_actions(symbol, splits)
             if include_earnings and av is not None:
                 try:
@@ -49,7 +69,7 @@ async def main(symbols: list[str], include_earnings: bool) -> None:
                 except AVError as exc:
                     print(f'{symbol}: Alpha Vantage earnings unavailable ({exc}); skipped.')
         rows = await compute_all(symbols)
-        print(f'Loaded {len(symbols)} live symbols and computed {len(rows)} risk profiles.')
+        print(f'Loaded {len(symbols)} live symbols, {intraday_count} intraday bars, and computed {len(rows)} risk profiles.')
     finally:
         if av:
             await av.aclose()

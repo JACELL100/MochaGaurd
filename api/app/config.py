@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     av_daily_budget: int = 25             # stop hitting the API when the day's budget is spent
     quote_poll_seconds: int = 60          # 0 disables the intraday quote poller
     yfinance_enabled: bool = True
+    intraday_backfill_on_start: bool = False
     universe: str = ('SPY,QQQ,IWM,AAPL,MSFT,NVDA,TSLA,AMZN,META,GOOGL,AMD,COIN,MSTR,PLTR,'
                      'SMCI,GME,CRM,COST,GLD,SLV,USO,XBI,SOFI,RIVN')
 

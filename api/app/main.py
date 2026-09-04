@@ -112,10 +112,37 @@ class LiveService:
             self.yf = YFinance()
         if self.av or self.yf:
             self.poller = QuotePoller(lambda: self.book, self.av, self.yf)
+        if settings.intraday_backfill_on_start and await db.intraday_count() == 0:
+            self.tasks.append(asyncio.create_task(self._backfill_intraday(), name='intraday-backfill'))
         if settings.scheduler_enabled:
             if self.poller:
                 self.tasks.append(asyncio.create_task(self.poller.run(), name='quote-poller'))
             self.tasks.append(asyncio.create_task(self._evaluation_loop(), name='risk-evaluator'))
+
+    async def _backfill_intraday(self) -> None:
+        if not self.yf and not (self.av and settings.alpha_vantage_premium):
+            return
+        for symbol in self.book.symbols:
+            try:
+                if self.av and settings.alpha_vantage_premium:
+                    try:
+                        bars = await self.av.intraday(symbol, interval='5min', full=True)
+                        source = 'alpha_vantage'
+                    except (AVError, QuotaExceeded):
+                        if not self.yf:
+                            raise
+                        bars = await self.yf.intraday(symbol)
+                        source = 'yfinance'
+                elif self.yf:
+                    bars = await self.yf.intraday(symbol)
+                    source = 'yfinance'
+                else:
+                    return
+                written = await db.upsert_bars_intraday(symbol, bars, source=source)
+                log.info('intraday backfill: %s bars for %s from %s', written, symbol, source)
+            except (AVError, QuotaExceeded, YFinanceError) as exc:
+                log.warning('intraday backfill unavailable for %s: %s', symbol, exc)
+        await self.reload_book()
 
     async def stop(self) -> None:
         for task in self.tasks:
@@ -210,6 +237,7 @@ class LiveService:
             raise HTTPException(status_code=422, detail='At least one symbol is required')
         await db.upsert_symbols([{'symbol': symbol, 'asset_type': 'equity'} for symbol in requested])
         bars_count = 0
+        intraday_count = 0
         earnings_count = 0
         actions_count = 0
         sources: dict[str, str] = {}
@@ -231,6 +259,25 @@ class LiveService:
                     raise HTTPException(status_code=503, detail=f'Market-data providers are unavailable: {yf_exc}') from yf_exc
                 sources[symbol] = 'yfinance'
             bars_count += await db.upsert_bars_daily(symbol, bars)
+            try:
+                if self.av is not None and settings.alpha_vantage_premium:
+                    try:
+                        intraday = await self.av.intraday(symbol, interval='5min', full=True)
+                        intraday_source = 'alpha_vantage'
+                    except (AVError, QuotaExceeded):
+                        if self.yf is None:
+                            raise
+                        intraday = await self.yf.intraday(symbol)
+                        intraday_source = 'yfinance'
+                elif self.yf is not None:
+                    intraday = await self.yf.intraday(symbol)
+                    intraday_source = 'yfinance'
+                else:
+                    intraday = []
+                    intraday_source = 'none'
+                intraday_count += await db.upsert_bars_intraday(symbol, intraday, source=intraday_source)
+            except (AVError, QuotaExceeded, YFinanceError) as exc:
+                log.warning('%s: intraday history unavailable (%s); retaining daily history', symbol, exc)
             actions_count += len(splits)
             await db.upsert_corporate_actions(symbol, splits)
             if include_earnings and self.av is not None and sources[symbol] == 'alpha_vantage':
@@ -244,8 +291,9 @@ class LiveService:
                     log.warning('%s: Alpha Vantage earnings unavailable (%s); retaining existing earnings', symbol, exc)
         risks = await compute_all(requested)
         await self.reload_book()
-        return {'symbols': requested, 'daily_bars_written': bars_count, 'earnings_written': earnings_count,
-                'corporate_actions_written': actions_count, 'risk_rows_computed': len(risks), 'sources': sources}
+        return {'symbols': requested, 'daily_bars_written': bars_count, 'intraday_bars_written': intraday_count,
+            'earnings_written': earnings_count, 'corporate_actions_written': actions_count,
+            'risk_rows_computed': len(risks), 'sources': sources}
 
 
 @asynccontextmanager
