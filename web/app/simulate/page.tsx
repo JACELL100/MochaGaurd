@@ -29,8 +29,6 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
 
   const ts = etWallClock(date, time);
   const { data: r, live, error } = await getLeverage({ symbol, notional, ts, earnings_tonight: earnings });
-  const cursorMinutes = Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
-
   return (
     <>
       <PageHeader

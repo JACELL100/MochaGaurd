@@ -72,6 +72,34 @@ python scripts/deploy_contract.py
 
 Copy the returned `CONTRACT_ADDRESS` into `api/.env`, restart the API, then have staff call `POST /anchor/{YYYY-MM-DD}`. The endpoint builds sorted-pair Keccak Merkle proofs from that day's stored decisions and submits exactly one Sepolia transaction. `GET /verify/{decision_id}` checks the stored proof against `MochaAnchor.verify` on-chain.
 
+## Deploy: Render API + Vercel web
+
+The repository now includes a Docker image at [`api/Dockerfile`](api/Dockerfile), a Render Blueprint at [`render.yaml`](render.yaml), and the Vercel build configuration at [`web/vercel.json`](web/vercel.json). Neither deployment receives a local `.env` file.
+
+1. Push this repository and create a Render **Blueprint** from it. The Blueprint deploys the `api` directory as a Docker web service and uses `GET /health` for health checks. Enter every `sync: false` environment variable in Render from `api/.env`; set `CORS_ORIGINS` to the Vercel production URL and add preview URLs if browser-to-API access is ever enabled. Keep the generated `INTERNAL_API_KEY` private and set the same value in Mochatrade's server-side broker integration.
+2. `RUN_MIGRATIONS_ON_START=true` in the Blueprint applies the idempotent Supabase schema at every Render container start. This is intentional and means a successful Render deployment completes the pending migration automatically. The current local migration could not reach the Supabase pooler from this network; see the verification note below.
+3. In Vercel, import the same repository with **Root Directory** set to `web`. Add `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (or `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`), `FASTAPI_URL=https://<your-render-service>.onrender.com`, and optionally `FASTAPI_TIMEOUT_MS=8000` for Production, Preview, and Development as appropriate. `FASTAPI_URL` is server-only; do not prefix it with `NEXT_PUBLIC_`.
+4. In Supabase Auth, add `https://<your-vercel-domain>/auth/callback` and any required Vercel preview callback URL to the Google redirect allow-list. Add the deployed web URL to `CORS_ORIGINS` in Render.
+
+Render's free web services spin down while idle. The Blueprint disables the in-process scheduler because it is not a dependable continuous worker on that tier; request-driven API evaluation still works. Use an always-on worker or paid service before depending on unattended polling, timed evaluations, or automatic daily anchoring.
+
+### Release checks
+
+```powershell
+# API checks
+cd api
+pytest -q
+python scripts/migrate.py
+
+# Frontend checks
+cd ../web
+npm ci
+npm run lint
+npm run build
+```
+
+The migration command is safe to run repeatedly. The configured Supabase host currently resolves but its port 6543 connection times out from this computer, so it could not be applied locally. Confirm it through a successful Render deploy or run the command from a network that permits outbound PostgreSQL connections to that Supabase pooler.
+
 ## Security boundaries
 
 - Browser code has only the Supabase anon/publishable key; database and Groq keys never leave the server.
