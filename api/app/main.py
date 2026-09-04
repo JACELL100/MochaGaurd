@@ -124,25 +124,29 @@ class LiveService:
             return
         for symbol in self.book.symbols:
             try:
-                if self.av and settings.alpha_vantage_premium:
-                    try:
-                        bars = await self.av.intraday(symbol, interval='5min', full=True)
-                        source = 'alpha_vantage'
-                    except (AVError, QuotaExceeded):
-                        if not self.yf:
-                            raise
-                        bars = await self.yf.intraday(symbol)
-                        source = 'yfinance'
-                elif self.yf:
-                    bars = await self.yf.intraday(symbol)
-                    source = 'yfinance'
-                else:
-                    return
-                written = await db.upsert_bars_intraday(symbol, bars, source=source)
-                log.info('intraday backfill: %s bars for %s from %s', written, symbol, source)
+                await self._backfill_symbol_intraday(symbol)
             except (AVError, QuotaExceeded, YFinanceError) as exc:
                 log.warning('intraday backfill unavailable for %s: %s', symbol, exc)
         await self.reload_book()
+
+    async def _backfill_symbol_intraday(self, symbol: str) -> int:
+        if self.av and settings.alpha_vantage_premium:
+            try:
+                bars = await self.av.intraday(symbol, interval='5min', full=True)
+                source = 'alpha_vantage'
+            except (AVError, QuotaExceeded):
+                if not self.yf:
+                    raise
+                bars = await self.yf.intraday(symbol)
+                source = 'yfinance'
+        elif self.yf:
+            bars = await self.yf.intraday(symbol)
+            source = 'yfinance'
+        else:
+            return 0
+        written = await db.upsert_bars_intraday(symbol, bars, source=source)
+        log.info('intraday backfill: %s bars for %s from %s', written, symbol, source)
+        return written
 
     async def stop(self) -> None:
         for task in self.tasks:
@@ -434,7 +438,13 @@ async def replay(input: ReplayInput, request: Request, _: Annotated[Principal, D
         raise HTTPException(status_code=404, detail='No daily market history is available for this symbol')
     rows = (await db.intraday_between(cal.session_open(session_date), cal.session_close(session_date), [input.symbol])).get(input.symbol, [])
     if not rows:
-        raise HTTPException(status_code=404, detail='No persisted real intraday bars exist for this date. Live polling builds this history.')
+        try:
+            await service._backfill_symbol_intraday(input.symbol)
+        except (AVError, QuotaExceeded, YFinanceError) as exc:
+            raise HTTPException(status_code=503, detail=f'Intraday market history is unavailable: {exc}') from exc
+        rows = (await db.intraday_between(cal.session_open(session_date), cal.session_close(session_date), [input.symbol])).get(input.symbol, [])
+    if not rows:
+        raise HTTPException(status_code=404, detail='No real intraday bars are available for this session.')
     risk = book.symbol_risk(input.symbol)
     points = []
     for row in rows:
