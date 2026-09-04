@@ -177,7 +177,7 @@ export default async function BookConsole() {
 function Unavailable({ title, error }: { title: string; error: string | null }) {
   return (
     <>
-      <PageHeader title={title} subtitle="Live, staff-only book risk monitoring." right={<SourceBadge live={false} error={error} />} />
+      <PageHeader title={title} subtitle="Live book risk monitoring for signed-in Mochaguard users." right={<SourceBadge live={false} error={error} />} />
       <Empty>{error ?? "The live risk service is unavailable."} <Link href="/login" className="text-accent hover:underline">Sign in</Link></Empty>
     </>
   );

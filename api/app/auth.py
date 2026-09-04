@@ -19,8 +19,6 @@ class Principal:
     user_id: str
     email: str
     display_name: str | None
-    is_staff: bool
-    internal: bool = False
 
 
 class SupabaseAuth:
@@ -46,24 +44,12 @@ class SupabaseAuth:
         return Principal(
             user_id=str(raw['id']), email=email,
             display_name=meta.get('full_name') or meta.get('name'),
-            is_staff=bool(email and email in settings.staff),
         )
 
 
 async def get_principal(request: Request) -> Principal:
-    internal_key = request.headers.get('x-internal-key', '')
-    if settings.internal_api_key and internal_key and internal_key == settings.internal_api_key:
-        return Principal(user_id='internal', email='internal@mochatrade.local', display_name='Mochatrade service',
-                         is_staff=True, internal=True)
     header = request.headers.get('authorization', '')
     if not header.lower().startswith('bearer '):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Sign in is required')
     service = request.app.state.service
     return await service.auth.authenticate(header[7:].strip())
-
-
-async def require_staff(request: Request) -> Principal:
-    principal = await get_principal(request)
-    if not principal.is_staff:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Mochatrade staff access is required')
-    return principal

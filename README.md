@@ -11,8 +11,7 @@ Copy [`api/.env.example`](api/.env.example) to `api/.env` and [`web/.env.local.e
 Required values not included in the provided connection string:
 
 - Supabase URL and browser-safe anon/publishable key for Google sign-in.
-- A long random `INTERNAL_API_KEY` shared only with Mochatrade's server-side account/position integration.
-- `STAFF_EMAILS` for book-console access.
+- A long random `INTERNAL_API_KEY` for the server-to-server account/position sync integration only.
 - A funded **Sepolia-only** private key before contract deployment. Never use a mainnet key.
 
 In Supabase Auth, configure Google and add these redirect URLs:
@@ -70,7 +69,7 @@ cd api
 python scripts/deploy_contract.py
 ```
 
-Copy the returned `CONTRACT_ADDRESS` into `api/.env`, restart the API, then have staff call `POST /anchor/{YYYY-MM-DD}`. The endpoint builds sorted-pair Keccak Merkle proofs from that day's stored decisions and submits exactly one Sepolia transaction. `GET /verify/{decision_id}` checks the stored proof against `MochaAnchor.verify` on-chain.
+Copy the returned `CONTRACT_ADDRESS` into `api/.env`, restart the API, then a signed-in user can call `POST /anchor/{YYYY-MM-DD}`. The endpoint builds sorted-pair Keccak Merkle proofs from that day's stored decisions and submits exactly one Sepolia transaction. `GET /verify/{decision_id}` checks the stored proof against `MochaAnchor.verify` on-chain.
 
 ## Deploy: Render API + Vercel web
 
@@ -103,6 +102,7 @@ The migration command is safe to run repeatedly. The configured Supabase host cu
 ## Security boundaries
 
 - Browser code has only the Supabase anon/publishable key; database and Groq keys never leave the server.
-- FastAPI verifies each Supabase bearer token with Supabase Auth and scopes non-staff users to their own account.
+- FastAPI verifies each Supabase bearer token with Supabase Auth. This hackathon deployment makes the dashboard, replay, market refresh, evaluation, anchoring, and verification features available to every Google-authenticated user.
+- The account/position sync endpoint remains server-to-server only because it changes another service's source-of-truth portfolio data.
 - The risk engine makes no database, Groq, or web3 calls while deciding. Persistence, explanations, and anchoring are downstream.
 - RLS is enabled on every database table; the Next.js app never queries Supabase tables directly.

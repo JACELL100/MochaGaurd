@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import db
 from .anchor import publisher
-from .auth import Principal, SupabaseAuth, get_principal, require_staff
+from .auth import Principal, SupabaseAuth, get_principal
 from .config import settings
 from .copilot import service as copilot
 from .data.alpha_vantage import AlphaVantage, AVError
@@ -193,8 +193,6 @@ class LiveService:
         return await self.evaluate(record=False)
 
     async def account_for(self, principal: Principal) -> dict:
-        if principal.internal:
-            raise HTTPException(status_code=400, detail='Internal calls must specify an account')
         account = await db.get_account_by_auth_user(principal.user_id)
         if account is None:
             account = await db.ensure_account(principal.email, principal.display_name, 'UTC', principal.user_id)
@@ -247,17 +245,10 @@ def service_of(request: Request) -> LiveService:
     return request.app.state.service
 
 
-async def accessible_account(service: LiveService, principal: Principal, account_id: str | None) -> dict:
-    own = await service.account_for(principal) if not principal.internal else None
-    if account_id is None:
-        if own is None:
-            raise HTTPException(status_code=422, detail='account_id is required for internal calls')
-        return own
+async def accessible_account(account_id: str) -> dict:
     requested = await db.get_account(account_id)
     if requested is None:
         raise HTTPException(status_code=404, detail='Account not found')
-    if not principal.is_staff and (own is None or str(own['id']) != str(requested['id'])):
-        raise HTTPException(status_code=403, detail='You may only access your own account')
     return requested
 
 
@@ -282,12 +273,11 @@ async def health(request: Request):
 @app.get('/me')
 async def me(request: Request, principal: Annotated[Principal, Depends(get_principal)]):
     account = await service_of(request).account_for(principal)
-    return {'user_id': principal.user_id, 'email': principal.email, 'is_staff': principal.is_staff,
-            'account_id': str(account['id'])}
+    return {'user_id': principal.user_id, 'email': principal.email, 'account_id': str(account['id'])}
 
 
 @app.get('/dashboard/book')
-async def dashboard_book(request: Request, _: Annotated[Principal, Depends(require_staff)]):
+async def dashboard_book(request: Request, _: Annotated[Principal, Depends(get_principal)]):
     service = service_of(request)
     result = await service.current_result()
     brief = await db.latest_ops_brief(datetime.now(tz=timezone.utc) - timedelta(days=1))
@@ -298,11 +288,8 @@ async def dashboard_book(request: Request, _: Annotated[Principal, Depends(requi
 @app.get('/dashboard/accounts')
 async def dashboard_accounts(request: Request, principal: Annotated[Principal, Depends(get_principal)]):
     service = service_of(request)
+    accounts = await db.list_accounts()
     result = await service.current_result()
-    if principal.is_staff:
-        accounts = await db.list_accounts()
-    else:
-        accounts = [await service.account_for(principal)]
     out = []
     for account in accounts:
         account_id = str(account['id'])
@@ -317,7 +304,7 @@ async def dashboard_accounts(request: Request, principal: Annotated[Principal, D
 @app.get('/tonight/{account_id}')
 async def tonight(account_id: str, request: Request, principal: Annotated[Principal, Depends(get_principal)]):
     service = service_of(request)
-    account = await accessible_account(service, principal, account_id)
+    account = await accessible_account(account_id)
     result = await service.current_result()
     if account_id not in service.require_book().acct_idx:
         raise HTTPException(status_code=404, detail='Account has no live portfolio in the risk book')
@@ -356,7 +343,7 @@ async def leverage(input: LeverageInput, request: Request, _: Annotated[Principa
 
 
 @app.post('/evaluate')
-async def evaluate(input: EvaluateInput, request: Request, _: Annotated[Principal, Depends(require_staff)]):
+async def evaluate(input: EvaluateInput, request: Request, _: Annotated[Principal, Depends(get_principal)]):
     ts = input.ts
     if ts and ts.tzinfo is None:
         raise HTTPException(status_code=422, detail='ts must include a timezone offset')
@@ -409,7 +396,7 @@ async def replay(input: ReplayInput, request: Request, _: Annotated[Principal, D
 
 
 @app.post('/anchor/{batch_date}')
-async def anchor(batch_date: date, input: AnchorInput, _: Annotated[Principal, Depends(require_staff)]):
+async def anchor(batch_date: date, input: AnchorInput, _: Annotated[Principal, Depends(get_principal)]):
     try:
         row = await publisher.anchor_day(batch_date, input.run_id)
     except (ValueError, publisher.AnchorUnavailable) as exc:
@@ -421,10 +408,6 @@ async def anchor(batch_date: date, input: AnchorInput, _: Annotated[Principal, D
 @app.get('/verify/{decision_id}')
 async def verify(decision_id: int, request: Request, principal: Annotated[Principal, Depends(get_principal)]):
     payload = await publisher.verify_decision(decision_id)
-    if payload.get('decision', {}).get('account_id') and not principal.is_staff:
-        own = await service_of(request).account_for(principal)
-        if payload['decision']['account_id'] != str(own['id']):
-            raise HTTPException(status_code=403, detail='You may only verify your own decisions')
     return payload
 
 
@@ -447,7 +430,7 @@ async def market(kind: str, request: Request, principal: Annotated[Principal, De
 
 
 @app.post('/admin/market/refresh')
-async def refresh_market(input: MarketRefreshInput, request: Request, _: Annotated[Principal, Depends(require_staff)]):
+async def refresh_market(input: MarketRefreshInput, request: Request, _: Annotated[Principal, Depends(get_principal)]):
     return await service_of(request).refresh_market(input.symbols, input.include_earnings)
 
 

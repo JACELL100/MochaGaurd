@@ -37,14 +37,13 @@ class Settings(BaseSettings):
     headline_cap: float = 20.0
 
     # --- service
-    internal_api_key: str = ''            # shared secret between Next.js and FastAPI (X-Internal-Key)
-    staff_emails: str = ''                # comma-separated; these users see the whole book
+    internal_api_key: str = ''            # server-to-server secret for /internal/accounts/sync only
     scheduler_enabled: bool = True
     run_migrations_on_start: bool = False
     engine_evaluate_seconds: int = 60
     cors_origins: str = 'http://localhost:3000'
 
-    @field_validator('universe', 'staff_emails', mode='before')
+    @field_validator('universe', mode='before')
     @classmethod
     def _strip(cls, v):
         return v.strip() if isinstance(v, str) else v
@@ -52,10 +51,6 @@ class Settings(BaseSettings):
     @property
     def symbols(self) -> list[str]:
         return [s.strip().upper() for s in self.universe.split(',') if s.strip()]
-
-    @property
-    def staff(self) -> set[str]:
-        return {e.strip().lower() for e in self.staff_emails.split(',') if e.strip()}
 
     @property
     def allowed_origins(self) -> list[str]:
