@@ -20,7 +20,8 @@ const KIND_LABEL: Record<ReplayEvent["kind"], string> = {
 };
 
 export function ReplayTimeline({ replay }: { replay: ReplayResult }) {
-  const { points, events } = replay;
+  const points = replay.points ?? [];
+  const events = replay.events ?? [];
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const raf = useRef<number | null>(null);
