@@ -112,49 +112,7 @@ export function ThreeEarthGlobe({ className = "" }: ThreeEarthGlobeProps) {
     );
     earthGroup.add(atmosphereMesh);
 
-    // 5. Elegant Orbital Curved Light Arcs & Glowing Node Beads
-    const createOrbitalArc = (r: number, tiltX: number, tiltY: number, colorHex: number) => {
-      const points: THREE.Vector3[] = [];
-      const segments = 80;
-      for (let i = 0; i <= segments; i++) {
-        const angle = (i / segments) * Math.PI * 1.35 - Math.PI * 0.15;
-        const x = Math.cos(angle) * r;
-        const y = Math.sin(angle) * (r * 0.45);
-        const z = Math.sin(angle) * (r * 0.65);
-        points.push(new THREE.Vector3(x, y, z));
-      }
-
-      const curve = new THREE.CatmullRomCurve3(points);
-      const arcGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(60));
-      const arcMat = new THREE.LineBasicMaterial({
-        color: new THREE.Color(colorHex),
-        transparent: true,
-        opacity: 0.5,
-        blending: THREE.AdditiveBlending,
-      });
-
-      const line = new THREE.Line(arcGeo, arcMat);
-      line.rotation.x = tiltX;
-      line.rotation.y = tiltY;
-
-      // Traveling glowing bead
-      const beadGeo = new THREE.SphereGeometry(0.05, 12, 12);
-      const beadMat = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(0xffffff),
-        blending: THREE.AdditiveBlending,
-      });
-      const bead = new THREE.Mesh(beadGeo, beadMat);
-      line.add(bead);
-
-      return { line, curve, bead, progress: Math.random() };
-    };
-
-    const arc1 = createOrbitalArc(earthRadius * 1.12, 0.4, 0.3, 0x8b5cf6);
-    const arc2 = createOrbitalArc(earthRadius * 1.18, -0.35, -0.4, 0x38bdf8);
-    earthGroup.add(arc1.line);
-    earthGroup.add(arc2.line);
-
-    // 6. Natural Lighting
+    // 5. Natural Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.35);
     scene.add(ambientLight);
 
@@ -166,7 +124,7 @@ export function ThreeEarthGlobe({ className = "" }: ThreeEarthGlobeProps) {
     softFill.position.set(-10, -5, 5);
     scene.add(softFill);
 
-    // 7. Interactive Drag Controls
+    // 6. Interactive Drag Controls
     let isDragging = false;
     let previousMousePosition = { x: 0, y: 0 };
     let targetRotationY = 0;
@@ -207,7 +165,7 @@ export function ThreeEarthGlobe({ className = "" }: ThreeEarthGlobeProps) {
     window.addEventListener("touchmove", handlePointerMove, { passive: true });
     window.addEventListener("touchend", handlePointerUp);
 
-    // 8. Resize Handler
+    // 7. Resize Handler
     const handleResize = () => {
       if (!container) return;
       width = container.clientWidth;
@@ -218,7 +176,7 @@ export function ThreeEarthGlobe({ className = "" }: ThreeEarthGlobeProps) {
     };
     window.addEventListener("resize", handleResize, { passive: true });
 
-    // 9. Animation Render Loop (Silky 60 FPS)
+    // 8. Animation Render Loop (Silky 60 FPS)
     let animId: number = 0;
 
     const render = () => {
@@ -237,20 +195,13 @@ export function ThreeEarthGlobe({ className = "" }: ThreeEarthGlobeProps) {
 
       earthMesh.rotation.y = currentRotationY;
 
-      // Animate orbital beads along arcs
-      [arc1, arc2].forEach((arc) => {
-        arc.progress = (arc.progress + 0.004) % 1;
-        const pos = arc.curve.getPoint(arc.progress);
-        arc.bead.position.copy(pos);
-      });
-
       renderer.render(scene, camera);
       animId = requestAnimationFrame(render);
     };
 
     render();
 
-    // 10. Intersection Observer to sleep when off-screen
+    // 9. Intersection Observer to sleep when off-screen
     const observer = new IntersectionObserver(
       (entries) => {
         isVisibleRef.current = entries[0]?.isIntersecting ?? true;

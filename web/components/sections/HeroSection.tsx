@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -12,10 +12,10 @@ import {
   BarChart3,
 } from "lucide-react";
 import { ThreeEarthGlobe } from "../backgrounds/ThreeEarthGlobe";
+import { HeroFintechCosmos } from "../backgrounds/HeroFintechCosmos";
+import { LiveMarketTicker } from "../ui/LiveMarketTicker";
 
 export function HeroSection() {
-  const [isPlayingDemo, setIsPlayingDemo] = useState(false);
-
   const pillars = [
     {
       icon: Zap,
@@ -47,21 +47,13 @@ export function HeroSection() {
     },
   ];
 
-  const liveTickers = [
-    { symbol: "BTC", price: "$25,432.10", change: "+2.4%", up: true, icon: "₿", color: "#F7931A" },
-    { symbol: "ETH", price: "$1,628.34", change: "+1.7%", up: true, icon: "◆", color: "#627EEA" },
-    { symbol: "SOL", price: "$121.09", change: "-0.3%", up: false, icon: "◎", color: "#14F195" },
-    { symbol: "NASDAQ", price: "18,432.21", change: "+0.6%", up: true, icon: "📈", color: "#38BDF8" },
-    { symbol: "S&P 500", price: "5,217.36", change: "+0.4%", up: true, icon: "📊", color: "#EF4444" },
-  ];
-
   return (
     <section className="relative w-full min-h-[100vh] flex flex-col justify-between overflow-hidden bg-[#05050A] text-white pt-20">
-      {/* 1. Deep Space Cosmic Radial Lighting */}
-      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(1300px_750px_at_50%_12%,rgba(124,58,237,0.18)_0%,transparent_60%),radial-gradient(900px_500px_at_85%_35%,rgba(99,102,241,0.08)_0%,transparent_50%),#05050A]" />
+      {/* 1. Deep Space Fintech Cosmos & Precision Telemetry Layer */}
+      <HeroFintechCosmos />
 
       {/* 2. Photorealistic 3D Earth Globe Horizon with Natural Night-Lights & Thin Edge Halo */}
-      <div className="absolute inset-0 pointer-events-none select-none flex items-end justify-center">
+      <div className="absolute inset-0 pointer-events-none select-none flex items-end justify-center z-10">
         <div className="relative w-full h-[620px] sm:h-[720px] md:h-[840px] flex items-center justify-center pointer-events-auto">
           {/* Photorealistic 3D Earth Globe */}
           <ThreeEarthGlobe className="w-full h-full" />
@@ -130,125 +122,6 @@ export function HeroSection() {
         </motion.div>
       </div>
 
-      {/* 4. Left & Right Floating Trade Stat Cards */}
-      <div className="absolute inset-0 pointer-events-none z-20 hidden md:block">
-        {/* Left Floating BTC Price Card */}
-        <motion.div
-          initial={{ opacity: 0, x: -30, y: 20 }}
-          animate={{
-            opacity: 1,
-            x: 0,
-            y: [0, -8, 0],
-          }}
-          transition={{
-            opacity: { duration: 0.8, delay: 0.3 },
-            x: { duration: 0.8, delay: 0.3 },
-            y: { duration: 6, repeat: Infinity, ease: "easeInOut" },
-          }}
-          className="absolute left-[5%] lg:left-[8%] xl:left-[10%] top-[24%] pointer-events-auto"
-        >
-          <div className="relative group w-64 rounded-2xl bg-[#0B0A14]/92 border border-[#F7931A]/40 p-4 shadow-[0_15px_35px_rgba(0,0,0,0.8),0_0_25px_rgba(247,147,26,0.2)] backdrop-blur-xl transition-transform hover:scale-105">
-            {/* Header: BTC Icon & Price */}
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-full bg-[#F7931A] text-black font-bold text-sm flex items-center justify-center shadow-[0_0_12px_#F7931A]">
-                  ₿
-                </div>
-                <div>
-                  <div className="text-[11px] font-mono text-[#94A3B8]">BTC</div>
-                  <div className="text-base font-bold font-mono text-white">$25,432.10</div>
-                </div>
-              </div>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30">
-                +2.4%
-              </span>
-            </div>
-
-            {/* Sparkline Wave */}
-            <div className="w-full h-10 mt-2">
-              <svg viewBox="0 0 200 40" className="w-full h-full overflow-visible">
-                <path
-                  d="M 0 30 Q 30 35, 60 20 T 120 15 T 160 8 T 200 5"
-                  fill="none"
-                  stroke="#10B981"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  className="filter drop-shadow-[0_0_8px_#10B981]"
-                />
-              </svg>
-            </div>
-
-            {/* Subtle glow border */}
-            <div className="absolute inset-0 rounded-2xl border border-[#F7931A]/30 pointer-events-none" />
-          </div>
-
-          {/* Subtitle tag below card */}
-          <div className="mt-3 text-left pl-2">
-            <span className="text-[10px] font-mono tracking-[0.2em] text-[#64748B] uppercase">
-              REAL-TIME MONITORING
-            </span>
-          </div>
-        </motion.div>
-
-        {/* Right Floating ETH Price Card */}
-        <motion.div
-          initial={{ opacity: 0, x: 30, y: 20 }}
-          animate={{
-            opacity: 1,
-            x: 0,
-            y: [0, 8, 0],
-          }}
-          transition={{
-            opacity: { duration: 0.8, delay: 0.4 },
-            x: { duration: 0.8, delay: 0.4 },
-            y: { duration: 6.5, repeat: Infinity, ease: "easeInOut", delay: 0.5 },
-          }}
-          className="absolute right-[5%] lg:right-[8%] xl:right-[10%] top-[28%] pointer-events-auto"
-        >
-          <div className="relative group w-64 rounded-2xl bg-[#0B0A14]/92 border border-[#8B5CF6]/40 p-4 shadow-[0_15px_35px_rgba(0,0,0,0.8),0_0_25px_rgba(139,92,246,0.25)] backdrop-blur-xl transition-transform hover:scale-105">
-            {/* Header: ETH Icon & Price */}
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-full bg-[#627EEA] text-white font-bold text-xs flex items-center justify-center shadow-[0_0_12px_#627EEA]">
-                  ◆
-                </div>
-                <div>
-                  <div className="text-[11px] font-mono text-[#94A3B8]">ETH</div>
-                  <div className="text-base font-bold font-mono text-white">$1,628.34</div>
-                </div>
-              </div>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30">
-                +1.7%
-              </span>
-            </div>
-
-            {/* Sparkline Wave */}
-            <div className="w-full h-10 mt-2">
-              <svg viewBox="0 0 200 40" className="w-full h-full overflow-visible">
-                <path
-                  d="M 0 32 Q 40 25, 80 30 T 130 18 T 170 12 T 200 6"
-                  fill="none"
-                  stroke="#A78BFA"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  className="filter drop-shadow-[0_0_8px_#A78BFA]"
-                />
-              </svg>
-            </div>
-
-            {/* Subtle glow border */}
-            <div className="absolute inset-0 rounded-2xl border border-[#8B5CF6]/30 pointer-events-none" />
-          </div>
-
-          {/* Subtitle tag below card */}
-          <div className="mt-3 text-right pr-2">
-            <span className="text-[10px] font-mono tracking-[0.2em] text-[#64748B] uppercase">
-              AUTOMATED PROTECTION
-            </span>
-          </div>
-        </motion.div>
-      </div>
-
       {/* 5. Globe Center Status & 4-Pillar Floating Glass Dock */}
       <div className="relative z-30 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 w-full flex flex-col items-center mt-auto pb-4">
         {/* Central Tag Above Dock */}
@@ -291,39 +164,8 @@ export function HeroSection() {
         </motion.div>
       </div>
 
-      {/* 6. Bottom Live Market Ticker Bar */}
-      <div className="relative z-30 w-full bg-[#05050A]/95 border-t border-[#1C1836] py-3 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4 text-xs font-mono">
-          {/* Left: Live Markets Label & Tickers */}
-          <div className="flex items-center flex-wrap gap-5">
-            <div className="flex items-center gap-2 font-bold text-[#E2E8F0]">
-              <span>LIVE MARKETS</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            </div>
-
-            <div className="flex items-center flex-wrap gap-4 text-[#CBD5E1]">
-              {liveTickers.map((t) => (
-                <div key={t.symbol} className="flex items-center gap-1.5">
-                  <span className="font-bold text-white flex items-center gap-1">
-                    <span style={{ color: t.color }}>{t.icon}</span>
-                    {t.symbol}
-                  </span>
-                  <span>{t.price}</span>
-                  <span className={t.up ? "text-emerald-400 font-semibold" : "text-rose-400 font-semibold"}>
-                    {t.change}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Right: Operational Status Indicator */}
-          <div className="flex items-center gap-2 text-emerald-400 font-medium">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#10B981] animate-pulse" />
-            <span>All Systems Operational</span>
-          </div>
-        </div>
-      </div>
+      {/* 6. Continuous Live Market Ticker with Real Yahoo Finance Data & TextLoop */}
+      <LiveMarketTicker />
     </section>
   );
 }
