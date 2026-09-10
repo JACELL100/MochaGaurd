@@ -138,6 +138,59 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
             </div>
           </GlowingCard>
 
+          {r.sector && r.sector.peers.length > 0 && (
+            <GlowingCard>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <h3 className="text-sm font-semibold text-white">
+                  Sector, in the markets that were open
+                </h3>
+                <Badge tone={r.sector.multiplier > 1.05 ? "warn" : "neutral"}>
+                  gap ×{r.sector.multiplier.toFixed(2)}
+                </Badge>
+              </div>
+              <p className="text-xs text-[#94A3B8] mb-4">
+                The US market is shut for 17.5 hours, but this stock&apos;s sector keeps trading —
+                Taiwan and Korea until ~1:30 AM New York, India until 5:45 AM, Europe until 7:00 AM.
+                A sector that already moved hard overseas is real information about tonight&apos;s gap.
+                Only markets whose session had <em>finished</em> are counted.
+              </p>
+
+              <ul className="space-y-1.5">
+                {r.sector.peers.map((peer) => (
+                  <li
+                    key={peer.ticker}
+                    className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-xs ${
+                      peer.counted ? "border-[#231F42] bg-[#05050A]/70" : "border-transparent opacity-45"
+                    }`}
+                  >
+                    <span className="w-4 text-center text-[#A78BFA]" aria-hidden>
+                      {peer.counted ? "✓" : "·"}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[#CBD5E1]">{peer.label}</span>
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-[#64748B]">
+                      {peer.region}
+                    </span>
+                    <span
+                      className={`w-16 text-right font-mono ${
+                        peer.move < 0 ? "text-rose-300" : "text-emerald-300"
+                      }`}
+                    >
+                      {peer.move >= 0 ? "+" : ""}
+                      {(peer.move * 100).toFixed(2)}%
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              <p className="mt-3 border-t border-[#1C1836] pt-3 text-xs text-[#64748B]">
+                {r.sector.note || "No sector market has finished trading since the US close."}{" "}
+                This only ever widens the move we size against — a calm night overseas is not
+                permission to exceed the stock&apos;s own history, and a sharp rally widens it just
+                as much as a selloff.
+              </p>
+            </GlowingCard>
+          )}
+
           {r.explanation && (
             <GlowingCard>
               <div className="flex flex-wrap items-center justify-between gap-2 mb-1">

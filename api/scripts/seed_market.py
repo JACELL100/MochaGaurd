@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import db
 from app.config import settings
 from app.data.alpha_vantage import AVError, AlphaVantage, QuotaExceeded
-from app.data import halts
+from app.data import halts, sectors
 from app.data.precompute import compute_all
 from app.data.yfinance import YFinance, YFinanceError
 
@@ -73,9 +73,14 @@ async def main(symbols: list[str], include_earnings: bool) -> None:
         # Halts are inferred from the tape we just stored, so the freeze guard has real events
         # to act on rather than an empty table.
         halt_info = await halts.detect_all(symbols)
+        # Sector peers that trade while the US is shut, so overnight leverage can react to a
+        # selloff that already happened in Taiwan, Korea, India or Europe.
+        peer_info = await sectors.refresh_sector_moves()
         print(f'Loaded {len(symbols)} live symbols, {intraday_count} intraday bars, and computed {len(rows)} risk profiles.')
         print(f"Halts inferred from the tape: {halt_info['halts_found']}"
               + (f" ({halt_info['by_symbol']})" if halt_info['by_symbol'] else ''))
+        print(f"Sector peers refreshed: {peer_info['stored']}/{peer_info['tickers']}"
+              + (f" (failed: {', '.join(peer_info['failed'])})" if peer_info['failed'] else ''))
     finally:
         if av:
             await av.aclose()

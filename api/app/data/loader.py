@@ -8,6 +8,7 @@ import numpy as np
 
 from .. import db
 from ..engine import calendar as cal
+from . import sectors
 from ..state import Account, BookState, DailySeries, IntradaySeries
 
 log = logging.getLogger('mochaguard.loader')
@@ -69,8 +70,13 @@ async def load_book(intraday_start: datetime | None = None, intraday_end: dateti
     if dropped:
         log.warning('%d positions reference symbols outside the universe and were ignored', dropped)
 
+    # Sector peers that trade during the US overnight window (TSMC, ASML, Nifty ...). Loaded
+    # here so the engine can read them without a database call while deciding.
+    peer_rows = await db.latest_sector_moves(sectors.all_peer_tickers(), date.today())
+
     book = BookState(symbols=symbols, risk=payload['risk'], accounts=accounts, positions=positions,
-                     earnings=earnings, splits=splits, halts=halts, daily=daily_series, intraday=intraday)
+                     earnings=earnings, splits=splits, halts=halts, daily=daily_series,
+                     intraday=intraday, sector_moves=peer_rows)
     log.info('book loaded: %d symbols, %d accounts, %d positions, %d symbols with intraday prints',
              len(symbols), len(accounts), len(positions), len(intraday))
     return book

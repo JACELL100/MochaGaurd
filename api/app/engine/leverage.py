@@ -39,6 +39,44 @@ def liquidity_fraction(phase: Phase) -> float:
     return 1.0
 
 
+# --------------------------------------------------------------------------- sector signal
+# While the US is shut, the same sector keeps trading elsewhere: TSMC and SK Hynix until 01:00
+# ET, India until ~05:45, ASML until ~07:00. A sector that has already sold off hard overseas
+# is evidence about how wide the US gap could be -- evidence the engine would otherwise ignore.
+#
+# Two rules keep this a risk measure rather than a price forecast:
+#   1. It is direction-agnostic. A +4% sector move widens the gap exactly as much as -4%,
+#      because the engine is sizing for volatility, not betting on a direction.
+#   2. It can only ever WIDEN the move we must survive, never narrow it. A calm night overseas
+#      is not permission to exceed the symbol's own historical p99.
+SECTOR_BETA = 0.6           # how much of a peer move typically carries into the US name
+SECTOR_MAX_WIDEN = 2.0      # hard ceiling: never more than double the historical gap
+SECTOR_MIN_PEERS = 2        # below this, one thin foreign print could move the limit
+SECTOR_QUIET = 0.005        # <= 0.5% average is an ordinary session: no adjustment at all
+
+
+def sector_widen(peer_moves: list[tuple[float, float]]) -> float:
+    """Multiplier (>= 1.0) applied to the overnight gap, from weighted peer moves.
+
+    ``peer_moves`` is [(move, weight), ...] for peers whose sessions had *closed* by the
+    decision time. Returns 1.0 when there is not enough evidence to act on.
+    """
+    usable = [(abs(m), w) for m, w in peer_moves if w > 0]
+    if len(usable) < SECTOR_MIN_PEERS:
+        return 1.0
+    total_weight = sum(w for _, w in usable)
+    if total_weight <= 0:
+        return 1.0
+    # Weighted mean absolute move: how much the sector actually moved, ignoring sign.
+    dispersion = sum(m * w for m, w in usable) / total_weight
+    if dispersion <= SECTOR_QUIET:
+        return 1.0          # an ordinary overseas session tells us nothing new
+    # Only the move *beyond* an ordinary session counts, scaled so a violent sector day
+    # (~5% average) approaches the ceiling while a 1-2% day is a modest widening.
+    excess = dispersion - SECTOR_QUIET
+    return float(min(SECTOR_MAX_WIDEN, 1.0 + SECTOR_BETA * excess / 0.03))
+
+
 @dataclass(frozen=True)
 class SymbolRisk:
     symbol: str
@@ -59,11 +97,17 @@ class LeverageResult:
     earnings_tonight: bool
     reason: str
     frozen: bool = False
+    sector_mult: float = 1.0
+    sector_note: str = ''
 
 
 def adverse_move(intraday_p99: float, gap_p99: float, earnings_gap_p99: float,
-                 earnings_tonight: bool, phase: Phase, ramp: float) -> float:
+                 earnings_tonight: bool, phase: Phase, ramp: float,
+                 sector_mult: float = 1.0) -> float:
     overnight = earnings_gap_p99 if earnings_tonight else gap_p99
+    # The sector signal only touches the overnight term -- it is evidence about the *gap*, and
+    # says nothing about how far price moves in the five minutes it takes us to exit intraday.
+    overnight *= max(1.0, sector_mult)
     overnight = max(overnight, intraday_p99)
     if phase == Phase.OPEN:
         return intraday_p99
@@ -73,8 +117,10 @@ def adverse_move(intraday_p99: float, gap_p99: float, earnings_gap_p99: float,
 
 
 def adverse_move_vec(intraday_p99: np.ndarray, gap_p99: np.ndarray, earnings_gap_p99: np.ndarray,
-                     earnings_tonight: np.ndarray, phase: Phase, ramp: float) -> np.ndarray:
+                     earnings_tonight: np.ndarray, phase: Phase, ramp: float,
+                     sector_mult: np.ndarray | float = 1.0) -> np.ndarray:
     overnight = np.where(earnings_tonight, earnings_gap_p99, gap_p99)
+    overnight = overnight * np.maximum(1.0, sector_mult)
     overnight = np.maximum(overnight, intraday_p99)
     if phase == Phase.OPEN:
         return intraday_p99.copy()
@@ -114,8 +160,10 @@ def max_leverage_vec(adverse: np.ndarray, participation: np.ndarray, safety: flo
 
 
 def max_leverage(risk: SymbolRisk, notional: float, phase: Phase, ramp: float,
-                 earnings_tonight: bool, safety: float, cap: float) -> LeverageResult:
-    adv = adverse_move(risk.intraday_p99, risk.gap_p99, risk.earnings_gap_p99, earnings_tonight, phase, ramp)
+                 earnings_tonight: bool, safety: float, cap: float,
+                 sector_mult: float = 1.0, sector_note: str = '') -> LeverageResult:
+    adv = adverse_move(risk.intraday_p99, risk.gap_p99, risk.earnings_gap_p99, earnings_tonight,
+                       phase, ramp, sector_mult)
     reachable = max(risk.adv_dollar * liquidity_fraction(phase), 1.0)
     participation = abs(notional) / reachable
     slip = slippage(participation)
@@ -123,7 +171,8 @@ def max_leverage(risk: SymbolRisk, notional: float, phase: Phase, ramp: float,
     lev = float(_cap(haircut * safety / (adv + slip), cap))
     reason = (f'phase={phase.value} ramp={ramp:.2f} adverse={adv:.3f} slip={slip:.4f} '
               f'conc={haircut:.2f} participation={participation:.5f} '
-              f'earnings={str(earnings_tonight).lower()} cap={cap:g}')
+              f'earnings={str(earnings_tonight).lower()} sector={sector_mult:.2f} cap={cap:g}')
     return LeverageResult(symbol=risk.symbol, max_leverage=round(lev, 2), adverse_move=adv, slippage=slip,
                           concentration_haircut=haircut, phase=phase.value,
-                          earnings_tonight=earnings_tonight, reason=reason)
+                          earnings_tonight=earnings_tonight, reason=reason,
+                          sector_mult=round(float(sector_mult), 4), sector_note=sector_note)

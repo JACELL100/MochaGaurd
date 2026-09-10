@@ -13,6 +13,7 @@ import numpy as np
 
 from .config import settings
 from .engine import calendar as cal
+from .data import sectors
 from .engine import guards, leverage, margin
 
 
@@ -92,7 +93,7 @@ ACTIONABLE = ('reduce', 'margin_call', 'close')
 class BookState:
     def __init__(self, *, symbols, risk: dict[str, dict], accounts: list[Account],
                  positions: list[tuple[str, str, float]], earnings=None, splits=None,
-                 halts=None, daily=None, intraday=None):
+                 halts=None, daily=None, intraday=None, sector_moves=None):
         self.symbols = list(symbols)
         self.sym_idx = {s: i for i, s in enumerate(self.symbols)}
 
@@ -110,6 +111,9 @@ class BookState:
         self.earnings: dict[str, list[tuple[date, str | None]]] = earnings or {}
         self.splits: dict[str, set[date]] = splits or {}
         self.halts: dict[str, list[tuple[datetime, datetime | None]]] = halts or {}
+        # ticker -> {'move': float, 'session_d': date}. Loaded from the DB at startup; the
+        # engine never queries for it while deciding.
+        self.sector_moves: dict[str, dict] = sector_moves or {}
         self.daily: dict[str, DailySeries] = daily or {}
         self.intraday: dict[str, IntradaySeries] = intraday or {}
 
@@ -206,6 +210,57 @@ class BookState:
                                minlength=len(self.symbols))
         return [self.symbols[i] for i in np.argsort(notional)[::-1] if notional[i] > 0]
 
+    # ------------------------------------------------------------------ sector signal
+    def sector_signal(self, symbol: str, ts: datetime) -> tuple[float, str, list[dict]]:
+        """How the symbol's sector has traded in markets that already closed, as of ``ts``.
+
+        Only peers whose own session finished *before* ``ts`` are used, which is what keeps this
+        free of look-ahead: at 15:45 ET no Asian session for tonight has happened yet, so the
+        signal is correctly neutral and only becomes informative overnight.
+        """
+        peers = sectors.peers_for(symbol)
+        if not peers:
+            return 1.0, '', []
+
+        # The signal is only meaningful once tonight's US session has actually closed. Before
+        # 16:00 the overseas sessions that would inform tonight's gap have not happened yet, and
+        # reference_close_date() points at *yesterday's* close -- which would make every peer
+        # look finished and quietly reintroduce look-ahead. So: no signal until the bell.
+        et = cal.to_et(ts)
+        phase_now = cal.phase_at(ts)
+        if phase_now in (cal.Phase.OPEN, cal.Phase.CLOSING_RAMP):
+            return 1.0, '', []
+        ref_close = cal.session_close(cal.reference_close_date(ts))
+        hours_since_close = (ts - ref_close).total_seconds() / 3600.0
+        if hours_since_close < 0:
+            return 1.0, '', []
+
+        used: list[tuple[float, float]] = []
+        detail: list[dict] = []
+        for peer in peers:
+            row = self.sector_moves.get(peer.ticker)
+            if row is None or row.get('move') is None:
+                continue
+            # close_et is expressed as an hour on the US-close day, so 25.5 == 01:30 ET next day.
+            peer_hours_after_close = peer.close_et - 16.0
+            closed_already = hours_since_close >= peer_hours_after_close
+            entry = {'ticker': peer.ticker, 'label': peer.label, 'region': peer.region,
+                     'move': round(float(row['move']), 5), 'weight': peer.weight,
+                     'session': str(row.get('session_d') or ''), 'counted': bool(closed_already)}
+            detail.append(entry)
+            if closed_already:
+                used.append((float(row['move']), peer.weight))
+
+        mult = leverage.sector_widen(used)
+        if not used:
+            note = 'No sector market has finished trading since the US close.'
+        else:
+            avg = sum(abs(m) for m, _ in used) / len(used)
+            note = (f"{len(used)} {sectors.sector_of(symbol).replace('_', ' ')} market"
+                    f"{'' if len(used) == 1 else 's'} moved {avg * 100:.1f}% on average "
+                    f"since the US close")
+        return mult, note, detail
+
     # ------------------------------------------------------------------ single-symbol leverage
     def symbol_risk(self, symbol: str) -> leverage.SymbolRisk:
         i = self.sym_idx[symbol]
@@ -219,8 +274,10 @@ class BookState:
         phase = cal.phase_at(ts)
         ramp = cal.ramp_fraction(ts)
         earn = cal.has_earnings_tonight(symbol, ts, self.earnings)
+        sector_mult, sector_note, _ = self.sector_signal(symbol, ts)
         res = leverage.max_leverage(self.symbol_risk(symbol), notional, phase, ramp, earn,
-                                    settings.safety, settings.headline_cap)
+                                    settings.safety, settings.headline_cap,
+                                    sector_mult=sector_mult, sector_note=sector_note)
         price, price_ts = self.prices_at(ts)
         prev = self.prev_close_at(ts)
         snap = guards.SymbolSnapshot(
@@ -263,8 +320,11 @@ class BookState:
                 decisions.append(Decision(ts, None, s, 'freeze', None, None, None, None, None,
                                           'guards=' + ','.join(g.reasons)))
 
+        # Same sector signal the single-symbol path uses, so /evaluate and /leverage can never
+        # disagree about how wide tonight's gap could be.
+        sector_mult = np.array([self.sector_signal(s, ts)[0] for s in self.symbols], dtype=float)
         adverse = leverage.adverse_move_vec(self.intraday_p99, self.gap_p99, self.earnings_gap_p99,
-                                            earn, phase, ramp)
+                                            earn, phase, ramp, sector_mult)
 
         ps = self.pos_sym
         px = price[ps]
@@ -327,6 +387,8 @@ class BookState:
             'accounts_at_risk': int(flagged.sum()),
             **counts,
             'frozen_symbols': [self.symbols[i] for i in np.nonzero(frozen)[0]],
+            'sector_stress': [{'symbol': self.symbols[i], 'multiplier': round(float(sector_mult[i]), 3)}
+                              for i in np.argsort(sector_mult)[::-1][:5] if sector_mult[i] > 1.0],
             'earnings_tonight': [self.symbols[i] for i in np.nonzero(earn)[0]],
             'top_concentration': [{'symbol': self.symbols[i], 'notional': round(float(conc[i]), 2),
                                    'share': round(float(conc[i] / total_gross), 4) if total_gross else 0.0}

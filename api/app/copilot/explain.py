@@ -61,6 +61,8 @@ def _driver(result: LeverageResult, risk) -> str:
         return 'earnings'
     if result.concentration_haircut < 1.0:
         return 'size'
+    if getattr(result, 'sector_mult', 1.0) > 1.05:
+        return 'sector'
     if result.max_leverage >= settings.headline_cap:
         return 'none'
     if result.phase in ('closed', 'pre'):
@@ -97,6 +99,24 @@ def explain_leverage(result: LeverageResult, risk, notional: float, ts) -> dict:
             'detail': ('This company announces results after the market shuts, which is when the '
                    'biggest overnight jumps happen. So the limit is based on how far this stock '
                    'has moved on its own past earnings nights, not on a normal night.'),
+            'impact': 'lowers',
+        })
+
+    sector_mult = getattr(result, 'sector_mult', 1.0) or 1.0
+    if sector_mult > 1.0:
+        note = getattr(result, 'sector_note', '') or ''
+        factors.append({
+            'label': 'Sector already moved overseas',
+            'value': f'gap widened x{sector_mult:.2f}',
+            'detail': (
+                (note + '. ' if note else '')
+                + 'The US market is shut, but this stock\'s sector kept trading elsewhere — '
+                  'Taiwan and Korea until about 1:30 AM New York time, India until 5:45 AM, '
+                  'Europe until 7:00 AM. A sector that has already moved hard overseas is real '
+                  'information about how far this stock can gap at the open, so the move we size '
+                  'against is widened. It works in both directions: a sharp rally widens it just '
+                  'as much as a selloff, because this measures how violent the night is, not '
+                  'which way it went.'),
             'impact': 'lowers',
         })
 
@@ -186,6 +206,9 @@ def _headline(result: LeverageResult, driver: str) -> str:
         return f'{sym} reports tonight, so it is capped at {lev} instead of the headline maximum.'
     if driver == 'size':
         return f'{sym} is capped at {lev} because this order is large relative to what the market trades.'
+    if driver == 'sector':
+        return (f'{sym} is capped at {lev} because its sector has already moved sharply in '
+                f'markets that traded while the US was shut.')
     if driver == 'none':
         return f'{sym} gets the full {lev}: we can sell it quickly and its risk is low right now.'
     if driver == 'overnight_gap':

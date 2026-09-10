@@ -154,6 +154,37 @@ async def halt_count() -> int:
     return await pool().fetchval('select count(*) from halts') or 0
 
 
+async def upsert_sector_moves(rows: list[dict]) -> int:
+    """Record the last completed session move for each foreign sector peer."""
+    if not rows:
+        return 0
+    async with pool().acquire() as conn:
+        await conn.executemany(
+            """insert into sector_moves (ticker, session_d, close_price, prev_close, move)
+               values ($1, $2, $3, $4, $5)
+               on conflict (ticker, session_d) do update
+                   set close_price = excluded.close_price, prev_close = excluded.prev_close,
+                       move = excluded.move, observed_at = now()""",
+            [(r['ticker'], r['session_d'], r.get('close_price'), r.get('prev_close'), r.get('move'))
+             for r in rows])
+    return len(rows)
+
+
+async def latest_sector_moves(tickers: list[str], on_or_before: date) -> dict[str, dict]:
+    """Most recent completed session per peer, at or before ``on_or_before``.
+
+    Bounded by date so a replay of an old session cannot see a move that had not happened yet.
+    """
+    if not tickers:
+        return {}
+    rows = await pool().fetch(
+        """select distinct on (ticker) ticker, session_d, close_price, prev_close, move
+           from sector_moves
+           where ticker = any($1::text[]) and session_d <= $2
+           order by ticker, session_d desc""", tickers, on_or_before)
+    return {r['ticker']: dict(r) for r in rows}
+
+
 async def latest_daily_date_any() -> date | None:
     """Most recent session that has a *following* session stored.
 

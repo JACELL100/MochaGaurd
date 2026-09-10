@@ -69,6 +69,20 @@ create table if not exists halts (
 alter table halts add column if not exists source text not null default 'inferred';
 create unique index if not exists halts_symbol_start_idx on halts (symbol, started_at);
 
+-- Sector peers that trade while the US market is shut (TSMC, SK Hynix, ASML, Nifty ...).
+-- Stores the *last completed* session move per peer, so overnight leverage can react to a
+-- sector selloff that has already happened somewhere else.
+create table if not exists sector_moves (
+  ticker      text not null,
+  session_d   date not null,                  -- the peer's own session date
+  close_price double precision,
+  prev_close  double precision,
+  move        double precision,               -- close/prev_close - 1
+  observed_at timestamptz not null default now(),
+  primary key (ticker, session_d)
+);
+create index if not exists sector_moves_d_idx on sector_moves (session_d desc);
+
 create table if not exists symbol_risk (
   symbol            text primary key references symbols on delete cascade,
   as_of             date not null,

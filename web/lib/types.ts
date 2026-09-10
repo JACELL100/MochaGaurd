@@ -192,8 +192,30 @@ export interface LeverageResult {
   earnings_tonight: boolean;
   reason: string;
   frozen: boolean;
+  sector_mult?: number;
+  sector_note?: string;
+  /** How this symbol's sector traded in the markets open while the US was shut. */
+  sector?: SectorSignal | null;
   explanation: LeverageExplanation | null;
   risk: SymbolRisk | null;
+}
+
+export interface SectorPeer {
+  ticker: string;
+  label: string;
+  region: string;
+  move: number;
+  weight: number;
+  session: string;
+  /** True once that market's own session had finished at the decision time. */
+  counted: boolean;
+}
+
+export interface SectorSignal {
+  sector: string | null;
+  multiplier: number;
+  note: string;
+  peers: SectorPeer[];
 }
 
 /** Why the engine returned this limit. Computed alongside the decision, never generated. */

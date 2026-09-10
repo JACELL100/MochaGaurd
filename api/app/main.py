@@ -24,6 +24,7 @@ from .config import settings
 from .copilot import explain
 from .copilot import service as copilot
 from .data import halts as halt_detect
+from .data import sectors
 from .data.alpha_vantage import AlphaVantage, AVError, QuotaExceeded
 from .data.loader import load_book
 from .data.poller import QuotePoller
@@ -430,8 +431,11 @@ async def leverage(input: LeverageInput, request: Request, _: Annotated[Principa
     except KeyError:
         raise HTTPException(status_code=404, detail=f'{input.symbol} is not in the live risk universe') from None
     risk = service.book.symbol_risk(input.symbol)
+    sector_mult, sector_note, peers = service.book.sector_signal(input.symbol, ts)
     # The explanation is computed, not generated: no model call, no network, always present.
     return {**result.__dict__, 'ramp': cal.ramp_fraction(ts),
+            'sector': {'sector': sectors.sector_of(input.symbol), 'multiplier': round(sector_mult, 4),
+                       'note': sector_note, 'peers': peers},
             'explanation': explain.explain_leverage(result, risk, input.notional, ts),
             'risk': {'symbol': risk.symbol, 'gap_p99': risk.gap_p99, 'intraday_p99': risk.intraday_p99,
                      'earnings_gap_p99': risk.earnings_gap_p99, 'adv_dollar': risk.adv_dollar}}
@@ -647,6 +651,34 @@ async def detect_halts(request: Request, _: Annotated[Principal, Depends(get_pri
     result = await halt_detect.detect_all(service.require_book().symbols)
     await service.reload_book()
     return result
+
+
+@app.post('/admin/sectors/refresh')
+async def refresh_sectors(request: Request, _: Annotated[Principal, Depends(get_principal)]):
+    """Pull the latest completed session move for every foreign sector peer.
+
+    These are the markets that trade while the US is shut (TSMC, SK Hynix, ASML, Nifty, Nikkei).
+    Overnight leverage widens when a symbol's sector has already moved hard somewhere else.
+    """
+    result = await sectors.refresh_sector_moves()
+    await service_of(request).reload_book()
+    return result
+
+
+@app.get('/sectors')
+async def sector_state(request: Request, _: Annotated[Principal, Depends(get_principal)]):
+    """Current sector-peer picture and the multiplier each held symbol is carrying."""
+    service = service_of(request)
+    book = service.require_book()
+    now = datetime.now(tz=timezone.utc)
+    out = []
+    for symbol in book.symbols:
+        mult, note, peers = book.sector_signal(symbol, now)
+        if not peers:
+            continue
+        out.append({'symbol': symbol, 'sector': sectors.sector_of(symbol),
+                    'multiplier': round(mult, 4), 'note': note, 'peers': peers})
+    return {'as_of': now.isoformat(), 'symbols': out}
 
 
 @app.post('/internal/accounts/sync')
