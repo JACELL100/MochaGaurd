@@ -35,7 +35,12 @@ class Settings(BaseSettings):
     anchor_hour_et: int = 20              # anchor the day's decisions at 20:00 ET
 
     # --- engine tuning: max_leverage = SAFETY / (adverse_move + slippage)
-    safety: float = 0.8
+    # SAFETY is the fraction of a customer's equity the broker is willing to see erased by one
+    # adverse move before it must already have acted. It is the numerator of the whole engine:
+    # 0.30 means "size every position so a p99 move costs at most ~30% of equity", which leaves
+    # real headroom for the slippage of actually getting out. Raising it toward 1.0 lets the
+    # customer be wiped out completely by a single p99 move and hands the broker the shortfall.
+    safety: float = 0.30
     headline_cap: float = 20.0
 
     # --- service

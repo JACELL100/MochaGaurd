@@ -63,8 +63,11 @@ create table if not exists halts (
   symbol      text not null references symbols on delete cascade,
   started_at  timestamptz not null,
   ended_at    timestamptz,
-  reason      text
+  reason      text,
+  source      text not null default 'inferred'   -- 'inferred' from tape gaps, or a real feed
 );
+alter table halts add column if not exists source text not null default 'inferred';
+create unique index if not exists halts_symbol_start_idx on halts (symbol, started_at);
 
 create table if not exists symbol_risk (
   symbol            text primary key references symbols on delete cascade,

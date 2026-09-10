@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { Badge, Banner, Card, Empty, Mono, PageHeader, SourceBadge, Stat, VerifyLink } from "@/components/ui";
+import { Badge, Banner, PageHeader, SourceBadge, Stat, VerifyLink } from "@/components/ui";
 import { getAccounts, getTonight } from "@/lib/api";
 import {
   actionLabel,
@@ -15,6 +15,7 @@ import {
   tzCity,
 } from "@/lib/format";
 import type { Explanation } from "@/lib/types";
+import { PlainReason } from "@/components/ui/PlainReason";
 import { AccountPicker } from "./AccountPicker";
 import { GlowingCard } from "@/components/ui/GlowingCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -22,59 +23,6 @@ import { Moon, ShieldCheck, Clock, Terminal } from "lucide-react";
 
 export const metadata = { title: "Tonight" };
 
-// High-fidelity fallback sample for previewing when local database is unseeded
-const SAMPLE_BRIEFING = {
-  account: {
-    account_id: "acct-0042",
-    display_name: "Vega Alpha Fund (Sample Preview)",
-    tz: "America/New_York",
-    equity: 125000,
-    cash: 38000,
-    gross_exposure: 345000,
-    leverage_used: 2.76,
-    margin_required: 48500,
-    margin_ratio: 2.58,
-    worst_case_loss: 42000,
-    positions: [
-      { symbol: "NVDA", qty: 450, price: 178.5, notional: 80325, max_leverage: 3.2, adverse_move: 0.18, earnings_tonight: true, frozen: false },
-      { symbol: "MSFT", qty: 300, price: 445.2, notional: 133560, max_leverage: 5.5, adverse_move: 0.045, earnings_tonight: false, frozen: false },
-      { symbol: "SMCI", qty: 250, price: 42.0, notional: 10500, max_leverage: 2.1, adverse_move: 0.28, earnings_tonight: true, frozen: false },
-      { symbol: "GME", qty: 500, price: 28.5, notional: 14250, max_leverage: 1.0, adverse_move: 0.35, earnings_tonight: false, frozen: true },
-    ],
-  },
-  status: "warn" as const,
-  headline: "Overnight Gap Buffer Alert: NVDA & SMCI Report Tonight",
-  summary: "Initial margin requirements have been dynamically ramped to 35% across earnings-exposed tech equities. Close-out deadline is 15:45 ET to avoid forced liquidation before 20:00 ET Sepolia anchoring.",
-  as_of: new Date().toISOString(),
-  local_time: "15:42 ET",
-  deadline_local: "15:45 ET",
-  deadline_et: "3 minutes to closing bell",
-  cards: [
-    {
-      decision_id: 1042,
-      action: "reduce" as const,
-      headline: "Trim SMCI by 80 shares ahead of after-hours release",
-      body: "High concentration combined with 28% historical earnings gap p99 exceeds the $125k portfolio equity safety budget.",
-      action_hint: "Sell 80 shares of SMCI at market or add $12,500 collateral before 15:45 ET.",
-      max_leverage: 2.1,
-      model: "qwen/qwen3.8-27b (Strict Grounding)",
-    },
-    {
-      decision_id: 1043,
-      action: "freeze" as const,
-      headline: "GME Position Frozen (Corporate Action Guard)",
-      body: "Split pending execution. Position is protected against automatic liquidation or margin calls.",
-      action_hint: "No action required. Position automatically unfreezes upon split completion.",
-      max_leverage: 1.0,
-      model: "qwen/qwen3.8-27b (Strict Grounding)",
-    },
-  ],
-  decisions: [
-    { id: 1042, action: "reduce" as const, symbol: "SMCI", qty_to_reduce: 80, reason: "earnings_p99_exceeded: gap 0.28 > allowed 0.12" },
-    { id: 1043, action: "freeze" as const, symbol: "GME", qty_to_reduce: 0, reason: "corporate_action_split_pending: freeze_guard_active" },
-  ],
-  model: "qwen/qwen3.8-27b (Groq)",
-};
 
 export default async function TonightPage({ searchParams }: { searchParams: Promise<{ account?: string }> }) {
   const { account } = await searchParams;
@@ -86,7 +34,9 @@ export default async function TonightPage({ searchParams }: { searchParams: Prom
   const selected = requested ?? fallback?.id;
 
   const tonightRes = selected ? await getTonight(selected) : null;
-  const briefing = tonightRes?.data ?? (accounts.length === 0 ? SAMPLE_BRIEFING : null);
+  // No stand-in briefing: a risk page that shows invented positions and deadlines is worse
+  // than one that says it has nothing to show.
+  const briefing = tonightRes?.data ?? null;
   const live = accountsRes.live && (tonightRes?.live ?? true);
   const error = accountsRes.error ?? tonightRes?.error ?? null;
 
@@ -103,26 +53,33 @@ export default async function TonightPage({ searchParams }: { searchParams: Prom
         }
       />
 
-      {briefing && <Briefing b={briefing} isPreview={!live} />}
+      {briefing ? (
+        <Briefing b={briefing} />
+      ) : (
+        <Banner
+          tone={error ? "danger" : "warn"}
+          icon={error ? "!" : "◔"}
+          title={error ? "Live risk data is unavailable" : "No portfolio is linked yet"}
+          body={
+            error ??
+            "This briefing is built from a real linked portfolio. Once Mochatrade's brokerage service syncs an account and its positions, the engine's overnight decision for it appears here."
+          }
+        />
+      )}
     </div>
   );
 }
 
-function Briefing({ b, isPreview = false }: { b: any; isPreview?: boolean }) {
+function Briefing({ b }: { b: any }) {
   const a = b.account;
   const tone = statusTone(b.status);
   const icon = b.status === "safe" ? "✅" : b.status === "auto_derisk" ? "🛑" : "⚠️";
   const actionable = b.cards.filter((c: any) => c.action !== "freeze");
   const frozen = b.cards.filter((c: any) => c.action === "freeze");
+  const plainDecisions = (b.decisions ?? []).filter((d: any) => d.plain);
 
   return (
     <div className="space-y-6 relative z-20">
-      {isPreview && (
-        <div className="p-3 rounded-xl bg-[#7C3AED]/15 border border-[#7C3AED]/30 flex items-center justify-between text-xs text-[#C4B5FD]">
-          <span>Interactive Preview Mode: Demonstrating overnight margin briefing telemetry</span>
-          <StatusBadge tone="accent">Sample Portfolio</StatusBadge>
-        </div>
-      )}
 
       <Banner
         tone={tone}
@@ -166,6 +123,20 @@ function Briefing({ b, isPreview = false }: { b: any; isPreview?: boolean }) {
           <div className="grid gap-4 md:grid-cols-2">
             {actionable.map((c: any, i: number) => (
               <ExplanationCard key={c.decision_id ?? i} c={c} tz={a.tz} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Every decision, with the reason it happened. The cards above are the narrated form and
+          only exist once the copilot has run; these are computed with the decision itself, so
+          this section is never empty when there is something to explain. */}
+      {plainDecisions.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-sm font-semibold tracking-wide text-white">Why the engine acted</h2>
+          <div className="grid gap-3 md:grid-cols-2">
+            {plainDecisions.map((d: any, i: number) => (
+              <PlainReason key={d.id ?? `p${i}`} plain={d.plain} raw={d.reason} />
             ))}
           </div>
         </section>

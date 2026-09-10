@@ -16,7 +16,9 @@ export interface Decision {
   equity: number | null;
   margin_required: number | null;
   qty_to_reduce: number | null;
+  /** Terse machine string, kept for audit and logs. Prefer `plain` for anything a person reads. */
   reason: string;
+  plain?: PlainReason;
 }
 
 export interface Concentration {
@@ -55,6 +57,7 @@ export interface BookSummary {
 export interface BookResponse {
   summary: BookSummary;
   ops_brief: string | null;
+  plain?: PlainBook;
   decisions: Decision[];
 }
 
@@ -189,8 +192,40 @@ export interface LeverageResult {
   earnings_tonight: boolean;
   reason: string;
   frozen: boolean;
-  explanation: string | null;
+  explanation: LeverageExplanation | null;
   risk: SymbolRisk | null;
+}
+
+/** Why the engine returned this limit. Computed alongside the decision, never generated. */
+export interface LeverageExplanation {
+  headline: string;
+  driver: "frozen" | "earnings" | "size" | "overnight_gap" | "closing" | "volatility" | "none";
+  factors: Array<{
+    label: string;
+    value: string;
+    detail: string;
+    impact: "raises" | "lowers" | "blocks";
+  }>;
+  formula: {
+    expression: string;
+    safety: number;
+    adverse_move: number;
+    slippage: number;
+    concentration_haircut: number;
+    denominator: number;
+    uncapped: number | null;
+    headline_cap: number;
+    result: number;
+    note: string;
+  };
+  safety_budget: {
+    label: string;
+    notional: number;
+    loss_at_p99: number;
+    equity_required: number | null;
+  };
+  deadline: { derisk_et: string; close_et: string; next_close: string };
+  model: string;
 }
 
 export interface VerifyResult {
@@ -208,10 +243,101 @@ export interface VerifyResult {
   anchored_at: string | null;
   decision: Decision | null;
   error: string | null;
+  plain?: PlainReason;
+  plain_proof?: PlainProof;
 }
 
 export interface ApiResult<T> {
   data: T | null;
   live: boolean;
   error: string | null;
+}
+
+
+/** One replayed session: the rubric scores plus the timeline that produced them. */
+export interface SessionReplay {
+  run_id: string;
+  session_date: string;
+  next_session: string;
+  steps: number;
+  decisions: number;
+  fills: number;
+  auto_derisk_fills: number;
+  unwind_fills: number;
+  symbols_missing_next_open: string[];
+  scores: {
+    broker_loss: number;
+    accounts_negative: number;
+    capital_efficiency: number;
+    positions_reduced: number;
+    reduced_that_would_have_recovered: number;
+    notional_sold: number;
+    notional_sold_unnecessarily: number;
+    share_of_book_sold: number | null;
+    user_trust: number;
+    equity_start: number;
+    equity_end: number;
+    gaps: Record<string, number>;
+  };
+  timeline: Array<{
+    ts: string;
+    phase: Phase;
+    ramp: number;
+    accounts_at_risk: number;
+    reduce: number;
+    margin_call: number;
+    close: number;
+    gross_exposure: number;
+    net_equity: number;
+    avg_leverage_used: number;
+    worst_case_loss: number;
+  }>;
+  plain?: PlainScores;
+  events: Array<{ ts: string; kind: string; note: string; slippage_bps: number | null }>;
+  fill_sample: Array<{
+    ts: string;
+    account_id: string;
+    symbol: string;
+    action: string;
+    qty: number;
+    ref_price: number;
+    fill_price: number;
+    slippage_bps: number;
+    minutes?: number;
+    kind: string;
+  }>;
+}
+
+
+/** Plain-language reason attached to a decision. Computed, never generated. */
+export interface PlainReason {
+  headline: string;
+  why: string;
+  next: string;
+  severity: "ok" | "info" | "warning" | "critical";
+}
+
+/** Plain-language read on the whole book. */
+export interface PlainBook {
+  headline: string;
+  why: string;
+  exposure: string;
+  drivers: string[];
+  severity: "ok" | "info" | "warning" | "critical";
+}
+
+/** What a replay's three scores mean in ordinary language. */
+export interface PlainScores {
+  headline: string;
+  broker_loss: string;
+  capital_efficiency: string;
+  user_trust: string;
+  severity: "ok" | "info" | "warning" | "critical";
+}
+
+/** What an on-chain verification result means without the cryptography vocabulary. */
+export interface PlainProof {
+  headline: string;
+  why: string;
+  severity: "ok" | "info" | "warning" | "critical";
 }

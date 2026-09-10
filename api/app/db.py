@@ -56,6 +56,13 @@ async def migrate() -> None:
         await conn.execute(sql)
 
 
+def _ts(value) -> datetime:
+    """Accept an ISO string or a datetime. Engine payloads are JSON-shaped, asyncpg is not."""
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace('Z', '+00:00'))
+    return value
+
+
 def _uuid(v: str | uuid.UUID | None) -> uuid.UUID | None:
     if v is None:
         return None
@@ -125,6 +132,71 @@ async def intraday_between(start: datetime, end: datetime, symbols: list[str] | 
     for r in rows:
         out.setdefault(r['symbol'], []).append(r)
     return out
+
+
+async def upsert_halts(rows: list[dict]) -> int:
+    """Record trading halts. Idempotent on (symbol, started_at)."""
+    if not rows:
+        return 0
+    async with pool().acquire() as conn:
+        await conn.executemany(
+            """insert into halts (symbol, started_at, ended_at, reason, source)
+               values ($1, $2, $3, $4, $5)
+               on conflict (symbol, started_at) do update
+                   set ended_at = excluded.ended_at, reason = excluded.reason""",
+            [(r['symbol'], _ts(r['started_at']),
+              _ts(r['ended_at']) if r.get('ended_at') else None,
+              r.get('reason'), r.get('source', 'inferred')) for r in rows])
+    return len(rows)
+
+
+async def halt_count() -> int:
+    return await pool().fetchval('select count(*) from halts') or 0
+
+
+async def latest_daily_date_any() -> date | None:
+    """Most recent session that has a *following* session stored.
+
+    A replay needs the next open to score its gap, so the newest bar in the table is not a
+    usable session date -- the one before it is.
+    """
+    return await pool().fetchval(
+        """select d from (select distinct d from bars_daily order by d desc limit 2) t
+           order by d asc limit 1""")
+
+
+async def next_open_prices(symbols: list[str], after: date) -> dict[str, float]:
+    """Split-adjusted opening price of the first session strictly after ``after``, per symbol.
+
+    Used only to score a replay once its decisions are made. Adjusted so a split between the
+    two sessions cannot masquerade as an overnight gap.
+    """
+    rows = await pool().fetch(
+        """select distinct on (symbol) symbol, open, close, adj_close
+           from bars_daily
+           where symbol = any($1::text[]) and d > $2 and open is not null
+           order by symbol, d asc""", symbols, after)
+    out: dict[str, float] = {}
+    for r in rows:
+        close, adj = r['close'], r['adj_close']
+        factor = (float(adj) / float(close)) if (close and adj and float(close) > 0) else 1.0
+        out[r['symbol']] = float(r['open']) * factor
+    return out
+
+
+async def intraday_all(symbol: str, as_of: date | None = None) -> list[asyncpg.Record]:
+    '''Every stored intraday print for one symbol, oldest first.
+
+    ``as_of`` clips the series to bars the engine could already have seen, so recomputing a
+    historical risk profile never uses a price from after that date (no look-ahead).
+    '''
+    if as_of is None:
+        return await pool().fetch(
+            'select ts, close, volume from bars_intraday where symbol = $1 order by ts', symbol)
+    return await pool().fetch(
+        '''select ts, close, volume from bars_intraday
+           where symbol = $1 and ts < (($2::date + 1)::timestamp at time zone 'America/New_York')
+           order by ts''', symbol, as_of)
 
 
 async def intraday_count() -> int:
@@ -321,9 +393,9 @@ async def insert_liquidations(fills: list[dict], run_id: str = '') -> None:
             '''insert into liquidations (decision_id, ts, account_id, symbol, qty, ref_price, fill_price, slippage_bps,
                                          minutes, proceeds, kind, run_id)
                values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)''',
-            [(f.get('decision_id'), f['ts'], _uuid(f.get('account_id')), f['symbol'], f['qty'], f['ref_price'],
-              f['fill_price'], f['slippage_bps'], f.get('minutes'), f.get('proceeds'), f.get('kind'), run_id)
-             for f in fills])
+            [(f.get('decision_id'), _ts(f['ts']), _uuid(f.get('account_id')), f['symbol'], f['qty'],
+              f['ref_price'], f['fill_price'], f['slippage_bps'], f.get('minutes'), f.get('proceeds'),
+              f.get('kind'), run_id) for f in fills])
 
 
 async def insert_snapshot(ts: datetime, phase: str, summary: dict, run_id: str = '') -> None:

@@ -1,9 +1,8 @@
-import { Badge, Card, Empty, Mono, PageHeader, SourceBadge, Stat, buttonClass, inputClass } from "@/components/ui";
+import { Badge, Banner, Mono, PageHeader, SourceBadge, Stat, inputClass } from "@/components/ui";
 import { getLeverage } from "@/lib/api";
 import { etWallClock } from "@/lib/engine";
 import { etDateTime, lev, money, pct, phaseLabel } from "@/lib/format";
 import { GlowingCard } from "@/components/ui/GlowingCard";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Calculator, Zap, ShieldAlert, Cpu } from "lucide-react";
 
 export const metadata = { title: "Simulate" };
@@ -21,38 +20,6 @@ const PRESETS: Array<{ label: string; time: string }> = [
   { label: "Closed 16:30", time: "16:30" },
 ];
 
-function calculateLocalSimulation(symbol: string, notional: number, earnings: boolean | undefined, time: string) {
-  const isEarnings = earnings ?? (symbol === "NVDA" || symbol === "SMCI");
-  const isRampTime = time >= "15:45" && time <= "16:00";
-  const isAfterHours = time > "16:00" || time < "09:30";
-
-  const adverseMove = isEarnings ? 0.18 : isAfterHours ? 0.08 : 0.045;
-  const slippage = (notional / 50_000_000) * 0.01;
-  const maxLeverage = Math.max(1.0, Math.min(20.0, 0.8 / (adverseMove + slippage)));
-
-  return {
-    symbol,
-    max_leverage: maxLeverage,
-    adverse_move: adverseMove,
-    slippage,
-    concentration_haircut: notional > 500_000 ? 0.85 : 1.0,
-    frozen: symbol === "GME",
-    phase: (isRampTime ? "closing_ramp" : isAfterHours ? "closed" : "open") as import("@/lib/types").Phase,
-    ramp: isRampTime ? 0.75 : 1.0,
-    earnings_tonight: isEarnings,
-    explanation: isEarnings
-      ? `Earnings reported tonight. Allowed leverage capped at ${maxLeverage.toFixed(1)}x to absorb historical ${pct(adverseMove)} p99 gap.`
-      : `Nominal trading session. Allowed leverage set at ${maxLeverage.toFixed(1)}x with standard ${pct(adverseMove)} intraday buffer.`,
-    reason: `simulated_evaluation: adverse=${pct(adverseMove)}, slippage=${pct(slippage)}, earnings=${isEarnings}`,
-    risk: {
-      gap_p99: 0.08,
-      intraday_p99: 0.045,
-      earnings_gap_p99: 0.18,
-      adv_dollar: 30_000_000_000,
-    },
-  };
-}
-
 export default async function SimulatePage({ searchParams }: { searchParams: Promise<{ symbol?: string; notional?: string; date?: string; time?: string; earnings?: string }> }) {
   const sp = await searchParams;
   const symbol = (typeof sp.symbol === "string" && sp.symbol.trim().toUpperCase()) || "NVDA";
@@ -63,8 +30,9 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
   const earnings = earningsParam === "1" ? true : earningsParam === "0" ? false : undefined;
 
   const ts = etWallClock(date, time);
-  const { data: liveData, live, error } = await getLeverage({ symbol, notional, ts, earnings_tonight: earnings });
-  const r = liveData ?? calculateLocalSimulation(symbol, notional, earnings, time);
+  // The engine is the only thing allowed to answer "how much leverage". A second copy of the
+  // formula in the browser would drift from it and quietly show a limit the API never issued.
+  const { data: r, live, error } = await getLeverage({ symbol, notional, ts, earnings_tonight: earnings });
 
   return (
     <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
@@ -128,6 +96,17 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
           </form>
         </GlowingCard>
 
+        {!r ? (
+          <Banner
+            tone="danger"
+            icon="!"
+            title={error ? "The risk engine did not answer" : `${symbol} is not in the live risk universe`}
+            body={
+              error ??
+              "The engine only prices symbols it has loaded split-adjusted history for. Seed the symbol on the API (scripts/seed_market.py) and try again."
+            }
+          />
+        ) : (
         <div className="space-y-6">
           <GlowingCard>
             <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
@@ -152,18 +131,86 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
               <div className="max-w-md p-4 rounded-xl bg-[#05050A]/70 border border-[#231F42] text-xs leading-relaxed text-[#CBD5E1]">
                 <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#A78BFA] uppercase tracking-wider mb-1.5">
                   <Cpu className="w-3.5 h-3.5" />
-                  Grounded Engine Explanation
+                  Why this number
                 </div>
-                {r.explanation ?? "No narration available for this decision."}
+                {r.explanation?.headline ?? r.reason}
               </div>
             </div>
           </GlowingCard>
+
+          {r.explanation && (
+            <GlowingCard>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <h3 className="text-sm font-semibold text-white">What moved this limit</h3>
+                <Badge tone="neutral">{r.explanation.model}</Badge>
+              </div>
+              <p className="text-xs text-[#94A3B8] mb-4">
+                Every factor the engine applied, in the order it applied them. Computed with the
+                decision — no model call, so it is always available and always matches the number.
+              </p>
+
+              <ul className="space-y-2.5">
+                {r.explanation.factors.map((f, i) => (
+                  <li key={i} className="flex gap-3 p-3 rounded-lg bg-[#05050A]/70 border border-[#1C1836]">
+                    <span
+                      className={`mt-0.5 shrink-0 text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                        f.impact === "raises"
+                          ? "bg-emerald-500/15 text-emerald-300"
+                          : f.impact === "blocks"
+                            ? "bg-amber-500/15 text-amber-300"
+                            : "bg-rose-500/15 text-rose-300"
+                      }`}
+                    >
+                      {f.impact}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-white">
+                        {f.label}
+                        <span className="ml-2 font-mono font-normal text-[#C4B5FD]">{f.value}</span>
+                      </div>
+                      <p className="mt-0.5 text-xs leading-relaxed text-[#94A3B8]">{f.detail}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="mt-4 pt-4 border-t border-[#1C1836]">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-[#94A3B8] mb-2">
+                  Check the arithmetic
+                </div>
+                <Mono className="block whitespace-pre-wrap break-words text-xs bg-[#05050A] p-3 rounded-lg border border-[#1C1836] text-[#C4B5FD]">
+                  {`${r.explanation.formula.concentration_haircut} × ${r.explanation.formula.safety} / (${r.explanation.formula.adverse_move} + ${r.explanation.formula.slippage}) = ${r.explanation.formula.uncapped ?? "–"}`}
+                  {"\n"}
+                  {`capped at ${r.explanation.formula.headline_cap}x → ${r.explanation.formula.result}x`}
+                </Mono>
+                <p className="mt-2 text-xs text-[#64748B]">{r.explanation.formula.note}</p>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
+                <Stat label="Position notional" value={money(r.explanation.safety_budget.notional)} />
+                <Stat
+                  label="Loss if it gaps to p99"
+                  value={money(r.explanation.safety_budget.loss_at_p99)}
+                  tone="warn"
+                />
+                <Stat
+                  label="Equity required"
+                  value={r.explanation.safety_budget.equity_required !== null ? money(r.explanation.safety_budget.equity_required) : "no exposure"}
+                />
+              </div>
+            </GlowingCard>
+          )}
 
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Stat label="Adverse move" value={pct(r.adverse_move, 1)} hint={r.earnings_tonight ? "earnings-gap p99" : r.phase === "open" ? "intraday p99" : "overnight gap p99"} tone="warn" />
             <Stat label="Slippage" value={pct(r.slippage, 2)} hint={r.risk ? `${pct(notional / r.risk.adv_dollar, 3)} of ADV$` : "own market impact"} />
             <Stat label="Concentration haircut" value={`×${r.concentration_haircut.toFixed(2)}`} hint={r.concentration_haircut < 1 ? "size > 1% of ADV$" : "no haircut"} tone={r.concentration_haircut < 1 ? "warn" : "neutral"} />
-            <Stat label="Safety budget" value="0.80" hint="tuned against replay broker loss" tone="accent" />
+            <Stat
+              label="Safety budget"
+              value={r.explanation ? r.explanation.formula.safety.toFixed(2) : "–"}
+              hint="share of equity a p99 move may cost"
+              tone="accent"
+            />
           </div>
 
           {r.risk && (
@@ -188,6 +235,7 @@ export default async function SimulatePage({ searchParams }: { searchParams: Pro
             <Mono className="block whitespace-pre-wrap break-all text-xs bg-[#05050A] p-3 rounded-lg border border-[#1C1836] text-[#C4B5FD]">{r.reason}</Mono>
           </GlowingCard>
         </div>
+        )}
       </div>
     </div>
   );

@@ -7,6 +7,9 @@ import { GlowingCard } from "../ui/GlowingCard";
 import { StatusBadge } from "../ui/StatusBadge";
 import { TrendingUp, AlertTriangle, ShieldCheck, Flame, Cpu, ArrowUpRight } from "lucide-react";
 
+// A static illustration of the product surface, shown above the real book console on the
+// landing page. The figures below are illustrative, not engine output, and the section is
+// labelled as such -- the live numbers are rendered further down the page from /dashboard/book.
 export function DashboardPreview() {
   const [activeTab, setActiveTab] = useState<"margin" | "concentration" | "copilot">("margin");
 
@@ -20,17 +23,21 @@ export function DashboardPreview() {
   return (
     <section className="relative py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
       <div className="text-center max-w-3xl mx-auto mb-12">
-        <StatusBadge tone="accent">Interactive Telemetry</StatusBadge>
+        <StatusBadge tone="accent">Illustration</StatusBadge>
         <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mt-3">
           Surveillance at Microsecond Speed
         </h2>
         <p className="text-sm sm:text-base text-[#94A3B8] mt-2">
           Calculates portfolio health before high-impact gaps hit the market.
         </p>
+        <p className="text-xs text-[#64748B] mt-3">
+          Illustrative figures. Live engine output for the real book is in the{" "}
+          <a href="#console" className="text-[#C4B5FD] hover:underline">risk console below</a>.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Live Risk Gauge HUD */}
+        {/* Left Column: risk gauge (illustrative) */}
         <div className="lg:col-span-1 flex flex-col gap-6">
           <RiskGauge
             value={0.42}

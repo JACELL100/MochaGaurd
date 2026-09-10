@@ -17,6 +17,27 @@ CONC_THRESHOLD = 0.01       # > 1% of ADV$ starts the concentration haircut
 CONC_FLOOR = 0.25
 MIN_LEVERAGE = 1.0
 
+# Pre-market books are a fraction of regular-session depth: a 4 AM screen may show a price with
+# only a few hundred shares behind it. Charging slippage against *daily* ADV would price that
+# tape as if it were midday liquidity, so participation is measured against the share of ADV
+# that actually trades pre-market. This is the "thin pre-market" trap: the quote is real, the
+# size behind it is not.
+PRE_LIQUIDITY_FRACTION = 0.02   # ~2% of a day's dollar volume trades 04:00-09:30
+CLOSED_LIQUIDITY_FRACTION = 0.05  # post-close/overnight: thin, but we are not trading anyway
+
+
+def liquidity_fraction(phase: Phase) -> float:
+    '''Share of a normal day's dollar volume reachable in ``phase``.
+
+    Slippage and the concentration haircut are both functions of participation, so shrinking
+    the denominator in the thin phases is what makes a pre-market exit correctly expensive.
+    '''
+    if phase == Phase.PRE:
+        return PRE_LIQUIDITY_FRACTION
+    if phase == Phase.CLOSED:
+        return CLOSED_LIQUIDITY_FRACTION
+    return 1.0
+
 
 @dataclass(frozen=True)
 class SymbolRisk:
@@ -86,6 +107,7 @@ def _cap(x, cap: float):
 
 
 def max_leverage_vec(adverse: np.ndarray, participation: np.ndarray, safety: float, cap: float) -> np.ndarray:
+    '''``participation`` must already be divided by the phase's reachable liquidity.'''
     slip = slippage_vec(participation)
     haircut = concentration_haircut_vec(participation)
     return _cap(haircut * safety / (adverse + slip), cap)
@@ -94,12 +116,14 @@ def max_leverage_vec(adverse: np.ndarray, participation: np.ndarray, safety: flo
 def max_leverage(risk: SymbolRisk, notional: float, phase: Phase, ramp: float,
                  earnings_tonight: bool, safety: float, cap: float) -> LeverageResult:
     adv = adverse_move(risk.intraday_p99, risk.gap_p99, risk.earnings_gap_p99, earnings_tonight, phase, ramp)
-    participation = abs(notional) / max(risk.adv_dollar, 1.0)
+    reachable = max(risk.adv_dollar * liquidity_fraction(phase), 1.0)
+    participation = abs(notional) / reachable
     slip = slippage(participation)
     haircut = concentration_haircut(participation)
     lev = float(_cap(haircut * safety / (adv + slip), cap))
     reason = (f'phase={phase.value} ramp={ramp:.2f} adverse={adv:.3f} slip={slip:.4f} '
-              f'conc={haircut:.2f} earnings={str(earnings_tonight).lower()} cap={cap:g}')
+              f'conc={haircut:.2f} participation={participation:.5f} '
+              f'earnings={str(earnings_tonight).lower()} cap={cap:g}')
     return LeverageResult(symbol=risk.symbol, max_leverage=round(lev, 2), adverse_move=adv, slippage=slip,
                           concentration_haircut=haircut, phase=phase.value,
                           earnings_tonight=earnings_tonight, reason=reason)

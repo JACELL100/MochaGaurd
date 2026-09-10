@@ -16,8 +16,43 @@ MIN_DAYS = 60
 ADV_WINDOW = 60
 EARNINGS_FLOOR_MULT = 2.5   # with too few observed earnings gaps, assume 2.5x the normal p99
 
+# While the market is open the engine can sell, so the only risk it carries is the move that
+# happens *inside the time it takes to get out* -- not a whole session's high-to-low range.
+# LIQ_HORIZON_MIN is that exit window; intraday risk is the p99 adverse move over it, measured
+# from real 1-5 minute bars when available and otherwise scaled down from the daily range by
+# sqrt(time), which is why an open-market limit is far higher than an overnight one.
+LIQ_HORIZON_MIN = 5.0
+SESSION_MIN = 390.0
+INTRADAY_FLOOR = 0.004
 
-def _stats(bars: list[dict], earnings: list[tuple[date, str | None]], as_of: date | None = None) -> dict | None:
+
+def _horizon_p99(bars: list[dict]) -> float | None:
+    '''p99 adverse move over LIQ_HORIZON_MIN, measured from real intraday prints.'''
+    px = np.array([float(b['close']) for b in bars if b.get('close')], dtype=float)
+    if len(px) < 200:
+        return None
+    step = max(1, int(round(LIQ_HORIZON_MIN / _bar_minutes(bars))))
+    if len(px) <= step:
+        return None
+    moves = np.abs(px[step:] / px[:-step] - 1.0)
+    moves = moves[np.isfinite(moves)]
+    if len(moves) < 100:
+        return None
+    return float(np.percentile(moves, 99))
+
+
+def _bar_minutes(bars: list[dict]) -> float:
+    '''Median spacing of the intraday series in minutes (handles 1min and 5min feeds).'''
+    ts = [b['ts'] for b in bars if b.get('ts')]
+    if len(ts) < 3:
+        return 5.0
+    deltas = np.diff(np.array([t.timestamp() for t in ts], dtype=float)) / 60.0
+    deltas = deltas[(deltas > 0) & (deltas <= 30)]
+    return float(np.median(deltas)) if len(deltas) else 5.0
+
+
+def _stats(bars: list[dict], earnings: list[tuple[date, str | None]], as_of: date | None = None,
+           intraday_bars: list[dict] | None = None) -> dict | None:
     rows = [b for b in bars if b['adj_close'] and b['close'] and (as_of is None or b['d'] <= as_of)]
     if len(rows) < MIN_DAYS:
         return None
@@ -33,8 +68,10 @@ def _stats(bars: list[dict], earnings: list[tuple[date, str | None]], as_of: dat
     gaps = np.abs(open_adj[1:] / adj[:-1] - 1.0)                                   # overnight
     # high/low are unadjusted; ratios within a day are split-invariant, so use the raw open
     raw_open = np.array([b['open'] for b in rows], dtype=float)
-    intraday = np.maximum(np.abs(high / raw_open - 1.0), np.abs(low / raw_open - 1.0))
-    intraday = intraday[np.isfinite(intraday)]
+    day_range = np.maximum(np.abs(high / raw_open - 1.0), np.abs(low / raw_open - 1.0))
+    day_range = day_range[np.isfinite(day_range)]
+    # Scale the full-session range down to the exit window by sqrt(time).
+    intraday = day_range * np.sqrt(LIQ_HORIZON_MIN / SESSION_MIN)
 
     # earnings gaps: AMC report on day t -> gap into t+1; BMO/unknown on day t -> gap into t
     ord_index = {int(o): i for i, o in enumerate(d)}
@@ -51,7 +88,13 @@ def _stats(bars: list[dict], earnings: list[tuple[date, str | None]], as_of: dat
 
     gap_p99 = float(np.percentile(gaps, 99)) if len(gaps) else 0.05
     gap_p50 = float(np.percentile(gaps, 50)) if len(gaps) else 0.01
-    intraday_p99 = float(np.percentile(intraday, 99)) if len(intraday) else 0.03
+    intraday_p99 = float(np.percentile(intraday, 99)) if len(intraday) else 0.005
+    if intraday_bars:
+        observed = _horizon_p99(intraday_bars)
+        if observed is not None:
+            intraday_p99 = observed
+    # Intraday exposure can never exceed the overnight gap it is a fraction of.
+    intraday_p99 = float(min(max(intraday_p99, INTRADAY_FLOOR), max(gap_p99, INTRADAY_FLOOR)))
     if len(earn_gaps) >= 4:
         earnings_gap_p99 = float(max(np.percentile(earn_gaps, 90), earn_gaps.max(), gap_p99))
     elif len(earn_gaps):
@@ -73,7 +116,8 @@ def _stats(bars: list[dict], earnings: list[tuple[date, str | None]], as_of: dat
 async def compute_symbol(symbol: str, as_of: date | None = None) -> dict | None:
     bars = [dict(r) for r in await db.daily_bars(symbol)]
     earnings = [(r['report_date'], r['timing']) for r in await db.earnings_for(symbol)]
-    s = _stats(bars, earnings, as_of)
+    intraday_bars = [dict(r) for r in await db.intraday_all(symbol, as_of)]
+    s = _stats(bars, earnings, as_of, intraday_bars)
     if s is None:
         return None
     return {'symbol': symbol, **s}

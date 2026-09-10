@@ -10,6 +10,7 @@ import type {
   BookResponse,
   LeverageResult,
   ReplayResult,
+  SessionReplay,
   TonightBriefing,
   VerifyResult,
 } from "./types";
@@ -94,6 +95,13 @@ export function getLeverage(params: {
         throw err;
       }
     },
+  );
+}
+
+/** Job 3 end to end: replay a whole session over the book and score the outcome. */
+export function runSessionReplay(params: { date?: string; step_minutes?: number } = {}): Promise<ApiResult<SessionReplay>> {
+  return withAvailability(() =>
+    call<SessionReplay>("/replay/session", { method: "POST", body: JSON.stringify(params) }),
   );
 }
 

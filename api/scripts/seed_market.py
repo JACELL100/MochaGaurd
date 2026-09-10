@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import db
 from app.config import settings
 from app.data.alpha_vantage import AVError, AlphaVantage, QuotaExceeded
+from app.data import halts
 from app.data.precompute import compute_all
 from app.data.yfinance import YFinance, YFinanceError
 
@@ -69,7 +70,12 @@ async def main(symbols: list[str], include_earnings: bool) -> None:
                 except AVError as exc:
                     print(f'{symbol}: Alpha Vantage earnings unavailable ({exc}); skipped.')
         rows = await compute_all(symbols)
+        # Halts are inferred from the tape we just stored, so the freeze guard has real events
+        # to act on rather than an empty table.
+        halt_info = await halts.detect_all(symbols)
         print(f'Loaded {len(symbols)} live symbols, {intraday_count} intraday bars, and computed {len(rows)} risk profiles.')
+        print(f"Halts inferred from the tape: {halt_info['halts_found']}"
+              + (f" ({halt_info['by_symbol']})" if halt_info['by_symbol'] else ''))
     finally:
         if av:
             await av.aclose()

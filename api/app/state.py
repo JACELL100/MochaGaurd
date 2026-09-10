@@ -230,7 +230,10 @@ class BookState:
             split_today=cal.to_et(ts).date() in self.splits.get(symbol, ()), earnings_window=earn)
         g = guards.check(snap, ts)
         if g.frozen:
-            return leverage.LeverageResult(**{**res.__dict__, 'frozen': True,
+            # A halt, a split, or an implausible print means the screen price is not tradeable.
+            # New exposure against it is refused outright (0x); existing positions are still
+            # never liquidated -- that is the freeze guard's whole purpose.
+            return leverage.LeverageResult(**{**res.__dict__, 'frozen': True, 'max_leverage': 0.0,
                                               'reason': res.reason + ' FROZEN:' + ','.join(g.reasons)})
         return res
 
@@ -267,7 +270,10 @@ class BookState:
         px = price[ps]
         mv = self.pos_qty * px
         notional = np.abs(mv)
-        participation = notional / self.adv_dollar[ps]
+        # Same phase-aware liquidity denominator the single-symbol path uses, so /evaluate and
+        # /leverage can never disagree about how expensive it is to get out right now.
+        reachable = np.maximum(self.adv_dollar[ps] * leverage.liquidity_fraction(phase), 1.0)
+        participation = notional / reachable
         maxlev = leverage.max_leverage_vec(adverse[ps], participation, settings.safety, settings.headline_cap)
 
         equity = self.cash + np.bincount(self.pos_acct, weights=mv, minlength=n_acct)

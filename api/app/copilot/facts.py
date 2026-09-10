@@ -17,11 +17,18 @@ def fmt_pct(x: float | None, digits: int = 0) -> str:
 def fmt_lev(x: float | None) -> str:
     if x is None:
         return '-'
-    return f'{x:.0f}x' if x >= 10 else f'{x:.1f}x'
+    if x == 0:
+        return '0x'
+    # One decimal everywhere except a whole-number limit: a cap displayed as "19x" when the
+    # engine actually returned 18.6x is a number the user cannot reconcile with the formula.
+    return f'{x:.0f}x' if float(x).is_integer() else f'{x:.1f}x'
 
 
 def fmt_money(x: float | None) -> str:
-    return '-' if x is None else f'${x:,.0f}'
+    if x is None:
+        return '-'
+    # Sign belongs outside the currency symbol: "-$1,200", never "$-1,200".
+    return f'-${abs(x):,.0f}' if x < 0 else f'${x:,.0f}'
 
 
 def fmt_shares(x: float | None) -> str:

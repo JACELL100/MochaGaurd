@@ -38,25 +38,44 @@ DEMO_GAPS = {'NVDA': -0.11, 'SMCI': -0.09, 'CRM': -0.06, 'MSTR': -0.05, 'COIN': 
 
 
 def _daily(rng, price, gap_p99, days=800, end=NEXT_DAY, gap_next=0.0):
+    '''A mean-reverting price path whose DEMO_DAY close is exactly ``price``.
+
+    The path must land on ``price`` because positions are sized in shares at ``price``; if the
+    series drifted away from it, every account's market value would be wrong at evaluation time
+    and the whole book would look insolvent for reasons that have nothing to do with risk.
+    A pure random walk over 800 days drifts by multiples, so the level is pinned back toward
+    ``price`` each step and the series is rescaled at the end to remove any residual error.
+    '''
     dates, opens, closes, vols = [], [], [], []
     d = end - timedelta(days=int(days * 1.5))
-    p = price * 0.6
+    p = price
     sigma = gap_p99 / 2.6
+    pull = 0.02                     # daily mean reversion toward `price`
     while d <= end:
         if cal.is_trading_day(d):
             if d == end:
                 o = closes[-1] * (1.0 + gap_next) if closes else p
                 c = o * (1.0 + rng.normal(0, sigma / 2))
             else:
-                o = p * (1.0 + rng.normal(0, sigma))
+                drift = pull * np.log(price / p)
+                o = p * (1.0 + drift + rng.normal(0, sigma))
                 c = o * (1.0 + rng.normal(0, sigma))
-            if d == DEMO_DAY:
-                c = price
             dates.append(d.toordinal()); opens.append(o); closes.append(c)
             vols.append(max(1e5, rng.lognormal(15, 0.4)))
             p = c
         d += timedelta(days=1)
-    return DailySeries(np.array(dates), np.array(opens), np.array(closes), np.array(vols))
+
+    dates = np.array(dates)
+    opens = np.array(opens)
+    closes = np.array(closes)
+    # Pin the DEMO_DAY close to `price` exactly, and carry the same factor through the series so
+    # returns (and therefore every risk statistic) are unchanged.
+    k = int(np.searchsorted(dates, DEMO_DAY.toordinal(), side='right')) - 1
+    if k >= 0 and closes[k] > 0:
+        factor = price / closes[k]
+        opens = opens * factor
+        closes = closes * factor
+    return DailySeries(dates, opens, closes, np.array(vols))
 
 
 def _intraday(rng, prev_close, intraday_p99, day=DEMO_DAY, step_min=5):
@@ -90,18 +109,34 @@ def demo_book(n_accounts: int = 2000, seed: int = 7) -> BookState:
                 'COST': [(NEXT_DAY, 'amc')]}
     splits = {'GME': {DEMO_DAY}}
 
+    # A realistic retail book: most accounts are solvent and merely over-levered, a deliberate
+    # minority is genuinely in trouble, and holdings are crowded into a few popular names so the
+    # book-level concentration risk is visible. Equity stays positive by construction -- the
+    # engine's job here is to size and de-risk live accounts, not to inherit insolvent ones.
+    #
+    # Cash is set so that equity = cash + sum(market value) holds exactly: a long-only account
+    # funded at `lev` gross leverage borrows (gross - equity), i.e. carries negative cash of that
+    # size. Equity therefore stays positive for every account at generation time.
+    crowded = [symbols.index(s) for s in ('NVDA', 'TSLA', 'MSFT', 'AAPL', 'SPY', 'PLTR', 'COIN', 'SMCI')]
+    weights = np.full(len(UNIVERSE), 1.0)
+    weights[crowded] = 6.0          # ~60% of the book concentrates into these names
+    weights /= weights.sum()
+
     accounts, positions = [], []
     for i in range(n_accounts):
         aid = f'acct-{i + 1:04d}'
         tz = TIMEZONES[i % len(TIMEZONES)]
         equity = float(rng.lognormal(np.log(40_000), 0.9))
-        lev = float(rng.uniform(1.0, 9.0))
+        # Most of the book sits at sane leverage; ~15% is aggressively levered and will trip
+        # the overnight margin check once the 15:30 ramp pulls limits down.
+        lev = float(rng.uniform(6.0, 14.0)) if rng.random() < 0.15 else float(rng.uniform(1.0, 5.0))
         k = int(rng.integers(1, 5))
-        picks = rng.choice(len(UNIVERSE), size=k, replace=False, p=None)
+        picks = rng.choice(len(UNIVERSE), size=k, replace=False, p=weights)
         gross = equity * lev
         for p in picks:
             s = symbols[p]
             positions.append((aid, s, gross / k / prices[s]))
+        # equity = cash + gross  =>  cash = equity - gross (negative = margin loan)
         accounts.append(Account(id=aid, tz=tz, cash=equity - gross, display_name=f'Trader {i + 1}'))
 
     return BookState(symbols=symbols, risk=risk, accounts=accounts, positions=positions,

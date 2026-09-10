@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Header } from "@/components/layout/Header";
+import { currentViewer } from "@/lib/supabase/server";
 import { Footer } from "@/components/layout/Footer";
 import "./globals.css";
 
@@ -20,14 +21,16 @@ export const metadata: Metadata = {
   description: "Sleep-safe leverage & overnight margin surveillance: explained by an AI copilot, provable on-chain.",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Resolved on the server so the header's identity is correct in the first paint.
+  const viewer = await currentViewer();
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
     >
       <body className="min-h-full flex flex-col bg-[#05050A] text-[#F8FAFC]">
-        <Header />
+        <Header viewer={viewer} />
         <main className="flex-1 w-full pt-16">{children}</main>
         <Footer />
       </body>

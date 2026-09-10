@@ -3,10 +3,12 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Shield, Sparkles, Activity, Layers, Terminal } from "lucide-react";
+import { Shield } from "lucide-react";
 import { StatusBadge } from "../ui/StatusBadge";
+import type { Viewer } from "@/lib/supabase/server";
+import { UserMenu } from "./UserMenu";
 
-export function Header() {
+export function Header({ viewer = null }: { viewer?: Viewer | null }) {
   const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
 
@@ -30,6 +32,7 @@ export function Header() {
     { name: "Live Book", href: "/#console" },
     { name: "Tonight (2 AM)", href: "/tonight" },
     { name: "Replay", href: "/replay" },
+    { name: "Score", href: "/score" },
     { name: "Verify (Sepolia)", href: "/verify" },
     { name: "Simulate", href: "/simulate" },
   ];
@@ -86,12 +89,8 @@ export function Header() {
               Sepolia Testnet Active
             </StatusBadge>
           </div>
-          <Link
-            href="/login"
-            className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] hover:from-[#8B5CF6] hover:to-[#7C3AED] shadow-[0_0_20px_rgba(124,58,237,0.4)] transition-all transform hover:-translate-y-0.5 active:translate-y-0"
-          >
-            Sign In
-          </Link>
+          {/* Resolves the live Supabase session: avatar when signed in, Sign In when not. */}
+          <UserMenu initialViewer={viewer} resolved />
         </div>
       </div>
     </header>

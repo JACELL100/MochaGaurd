@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any
@@ -20,7 +21,9 @@ from . import db
 from .anchor import publisher
 from .auth import Principal, SupabaseAuth, get_principal
 from .config import settings
+from .copilot import explain
 from .copilot import service as copilot
+from .data import halts as halt_detect
 from .data.alpha_vantage import AlphaVantage, AVError, QuotaExceeded
 from .data.loader import load_book
 from .data.poller import QuotePoller
@@ -28,6 +31,7 @@ from .data.precompute import compute_all
 from .data.yfinance import YFinance, YFinanceError
 from .engine import calendar as cal
 from .engine import leverage as leverage_engine
+from .engine import replay as replay_engine
 
 log = logging.getLogger('mochaguard.api')
 
@@ -76,6 +80,14 @@ class ReplayInput(BaseModel):
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
         return value.strip().upper()
+
+
+class SessionReplayInput(BaseModel):
+    '''Replay one whole session over the book and score the outcome.'''
+    model_config = ConfigDict(populate_by_name=True)
+    session_date: date | None = Field(default=None, alias='date')
+    step_minutes: int = Field(default=15, ge=1, le=60)
+    persist: bool = True
 
 
 class AnchorInput(BaseModel):
@@ -356,8 +368,12 @@ async def dashboard_book(request: Request, _: Annotated[Principal, Depends(get_p
     service = service_of(request)
     result = await service.current_result()
     brief = await db.latest_ops_brief(datetime.now(tz=timezone.utc) - timedelta(days=1))
+    # Every decision carries its own plain-language reason, so no screen ever shows a bare
+    # machine string like "equity=79432 margin_req=95000" to a person.
+    decisions = [{**decision_json(d), 'plain': explain.explain_decision(decision_json(d))}
+                 for d in result.decisions]
     return {'summary': result.summary, 'ops_brief': brief['body'] if brief else None,
-            'decisions': [decision_json(d) for d in result.decisions]}
+            'plain': explain.explain_book(result.summary), 'decisions': decisions}
 
 
 @app.get('/dashboard/accounts')
@@ -386,6 +402,8 @@ async def tonight(account_id: str, request: Request, principal: Annotated[Princi
     view = service.book.account_view(account_id, result)
     decisions = [decision_json(d) for d in result.decisions if d.account_id == account_id or
                  (d.action == 'freeze' and any(p['symbol'] == d.symbol for p in view['positions']))]
+    for decision in decisions:
+        decision['plain'] = explain.explain_decision(decision, tz=view.get('tz'))
     saved = await db.recent_decisions(datetime.now(tz=timezone.utc) - timedelta(days=1), account_id)
     explanations = await db.explanations_for_decisions([int(d['id']) for d in saved])
     cards = []
@@ -412,7 +430,9 @@ async def leverage(input: LeverageInput, request: Request, _: Annotated[Principa
     except KeyError:
         raise HTTPException(status_code=404, detail=f'{input.symbol} is not in the live risk universe') from None
     risk = service.book.symbol_risk(input.symbol)
-    return {**result.__dict__, 'ramp': cal.ramp_fraction(ts), 'explanation': None,
+    # The explanation is computed, not generated: no model call, no network, always present.
+    return {**result.__dict__, 'ramp': cal.ramp_fraction(ts),
+            'explanation': explain.explain_leverage(result, risk, input.notional, ts),
             'risk': {'symbol': risk.symbol, 'gap_p99': risk.gap_p99, 'intraday_p99': risk.intraday_p99,
                      'earnings_gap_p99': risk.earnings_gap_p99, 'adv_dollar': risk.adv_dollar}}
 
@@ -423,7 +443,9 @@ async def evaluate(input: EvaluateInput, request: Request, _: Annotated[Principa
     if ts and ts.tzinfo is None:
         raise HTTPException(status_code=422, detail='ts must include a timezone offset')
     result = await service_of(request).evaluate(ts, record=True)
-    return {'summary': result.summary, 'decisions': [decision_json(d) for d in result.decisions]}
+    return {'summary': result.summary, 'plain': explain.explain_book(result.summary),
+            'decisions': [{**decision_json(d), 'plain': explain.explain_decision(decision_json(d))}
+                          for d in result.decisions]}
 
 
 @app.post('/replay')
@@ -476,6 +498,91 @@ async def replay(input: ReplayInput, request: Request, _: Annotated[Principal, D
                                            'close_allowed_leverage': last['max_leverage']}}
 
 
+@app.post('/replay/session')
+async def replay_session(input: SessionReplayInput, request: Request,
+                         _: Annotated[Principal, Depends(get_principal)]):
+    """Job 3 end to end: step a real session, hold through the gap, unwind at the open, score it.
+
+    Runs on a *clone* of the live book so the replay can mutate positions and cash without
+    touching live state. The next session's open is used only to score decisions that were
+    already made -- the engine never sees it while deciding.
+    """
+    service = service_of(request)
+    book = service.require_book()
+    session_date = input.session_date
+    if session_date is None:
+        session_date = await db.latest_daily_date_any()
+    if session_date is None:
+        raise HTTPException(status_code=503, detail='No daily market history is loaded. Run scripts/seed_market.py.')
+    if not cal.is_trading_day(session_date):
+        raise HTTPException(status_code=422, detail=f'{session_date} is not a trading day')
+
+    next_open = await db.next_open_prices(book.symbols, session_date)
+    missing = [s for s in book.symbols if s not in next_open]
+    if len(missing) == len(book.symbols):
+        raise HTTPException(
+            status_code=404,
+            detail=(f'No recorded open after {session_date} for any symbol. Replay scores the gap '
+                    f'against the next session, so a later trading day must be seeded.'))
+
+    clone = book.clone()
+    prices = clone.last_close.copy()
+    for i, symbol in enumerate(clone.symbols):
+        if symbol in next_open:
+            prices[i] = next_open[symbol]
+
+    run_id = f'replay-{session_date.isoformat()}-{uuid.uuid4().hex[:8]}'
+    result = await asyncio.to_thread(replay_engine.run_session, clone, session_date, prices,
+                                     run_id=run_id, step_minutes=input.step_minutes)
+
+    steps = [{'ts': st.ts.isoformat(), 'phase': st.phase, 'ramp': st.ramp,
+              'accounts_at_risk': st.summary['accounts_at_risk'], 'reduce': st.summary['reduce'],
+              'margin_call': st.summary['margin_call'], 'close': st.summary['close'],
+              'gross_exposure': st.summary['gross_exposure'], 'net_equity': st.summary['net_equity'],
+              'avg_leverage_used': st.summary['avg_leverage_used'],
+              'worst_case_loss': st.summary['worst_case_loss']} for st in result.steps]
+    next_session = cal.next_trading_day(session_date).isoformat()
+    summary = {'run_id': run_id, 'session_date': session_date.isoformat(),
+               'next_session': next_session,
+               'steps': len(steps), 'decisions': len(result.decisions), 'fills': len(result.fills),
+               'auto_derisk_fills': sum(1 for f in result.fills if f['kind'] == 'auto_derisk'),
+               'unwind_fills': sum(1 for f in result.fills if f['kind'] == 'open_unwind'),
+               'symbols_missing_next_open': missing, 'scores': result.scores, 'timeline': steps,
+               'plain': explain.explain_scores(result.scores, session_date=session_date.isoformat(),
+                                               next_session=next_session)}
+
+    if input.persist:
+        try:
+            ids = await db.log_decisions(result.decisions, run_id=run_id)
+            for decision, decision_id in zip(result.decisions, ids):
+                decision['id'] = decision_id
+            await db.insert_liquidations(result.fills, run_id=run_id)
+            await db.save_replay(run_id, session_date, summary, result.events, result.series)
+        except Exception:  # noqa: BLE001
+            log.exception('replay persistence failed for %s', run_id)
+
+    # Fills are persisted in full; the response carries a bounded sample so a 2,000-account
+    # replay does not return a multi-megabyte payload to a dashboard.
+    return {**summary, 'events': result.events, 'series': result.series,
+            'fill_sample': result.fills[:50]}
+
+
+@app.get('/replay/runs')
+async def replay_runs(request: Request, _: Annotated[Principal, Depends(get_principal)]):
+    return {'runs': [{'run_id': r['run_id'], 'session_date': r['session_date'].isoformat(),
+                      'created_at': r['created_at'].isoformat(),
+                      'scores': (r['summary'] or {}).get('scores')} for r in await db.list_replays()]}
+
+
+@app.get('/replay/runs/{run_id}')
+async def replay_run(run_id: str, request: Request, _: Annotated[Principal, Depends(get_principal)]):
+    row = await db.get_replay(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail='No replay run with that id')
+    return {'run_id': row['run_id'], 'session_date': row['session_date'].isoformat(),
+            **(row['summary'] or {}), 'events': row['events'], 'series': row['series']}
+
+
 @app.post('/anchor/{batch_date}')
 async def anchor(batch_date: date, input: AnchorInput, _: Annotated[Principal, Depends(get_principal)]):
     try:
@@ -489,6 +596,10 @@ async def anchor(batch_date: date, input: AnchorInput, _: Annotated[Principal, D
 @app.get('/verify/{decision_id}')
 async def verify(decision_id: int, request: Request, principal: Annotated[Principal, Depends(get_principal)]):
     payload = await publisher.verify_decision(decision_id)
+    decision = payload.get('decision')
+    if decision:
+        payload['plain'] = explain.explain_decision(decision)
+    payload['plain_proof'] = explain.explain_verification(payload)
     return payload
 
 
@@ -522,6 +633,20 @@ async def market(kind: str, request: Request, principal: Annotated[Principal, De
 @app.post('/admin/market/refresh')
 async def refresh_market(input: MarketRefreshInput, request: Request, _: Annotated[Principal, Depends(get_principal)]):
     return await service_of(request).refresh_market(input.symbols, input.include_earnings)
+
+
+@app.post('/admin/halts/detect')
+async def detect_halts(request: Request, _: Annotated[Principal, Depends(get_principal)]):
+    """Scan the stored tape for halts and record them.
+
+    A halt is a stopped tape, not a calm one: consecutive unchanged prints with no volume during
+    regular hours. Marking them is what lets the freeze guard refuse to liquidate into a stale
+    price on real data.
+    """
+    service = service_of(request)
+    result = await halt_detect.detect_all(service.require_book().symbols)
+    await service.reload_book()
+    return result
 
 
 @app.post('/internal/accounts/sync')

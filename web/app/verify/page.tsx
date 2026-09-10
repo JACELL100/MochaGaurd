@@ -1,54 +1,23 @@
 import Link from "next/link";
 
-import { Badge, Banner, Card, Mono, PageHeader, SourceBadge, buttonClass, inputClass } from "@/components/ui";
+import { Badge, Banner, Mono, PageHeader, SourceBadge, inputClass } from "@/components/ui";
 import { getVerify } from "@/lib/api";
 import { actionLabel, actionTone, etDateTime, lev, money, pct, shares, shortHash } from "@/lib/format";
 import type { VerifyResult } from "@/lib/types";
 import { GlowingCard } from "@/components/ui/GlowingCard";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ShieldCheck, Lock, CheckCircle2, ArrowRight, ExternalLink } from "lucide-react";
 
 export const metadata = { title: "Verify" };
 
-const SAMPLE_VERIFIED: VerifyResult = {
-  found: true,
-  anchored: true,
-  valid: true,
-  error: null,
-  decision_id: 1001,
-  batch_date: "2026-09-08",
-  anchored_at: new Date().toISOString(),
-  tx_hash: "0x7a8f9c2d1e3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d0c1b2a3f4e5d6c7b8a9f",
-  contract_address: "0x89C1aB54d4A0D8e96196232924F8F752C89547dF",
-  merkle_root: "0x3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f",
-  leaf_hash: "0x9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e",
-  merkle_path: [
-    "0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000",
-    "0x22223333444455556666777788889999aaaabbbbccccddddeeeeffff00001111",
-    "0x3333444455556666777788889999aaaabbbbccccddddeeeeffff000011112222",
-  ],
-  etherscan_url: "https://sepolia.etherscan.io/tx/0x7a8f9c2d1e3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d0c1b2a3f4e5d6c7b8a9f",
-  decision: {
-    id: 1001,
-    ts: new Date().toISOString(),
-    account_id: "acct-0042",
-    symbol: "NVDA",
-    action: "reduce",
-    max_leverage: 3.2,
-    adverse_move: 0.18,
-    equity: 125000,
-    margin_required: 48500,
-    qty_to_reduce: 50,
-    reason: "earnings_overnight_ramp: reduced from 5.0x to 3.2x ahead of 20:00 ET",
-  },
-};
 
 export default async function VerifyPage({ searchParams }: { searchParams: Promise<{ id?: string }> }) {
   const { id } = await searchParams;
   const raw = typeof id === "string" ? id.trim().replace(/^#/, "") : "";
   const decisionId = /^\d+$/.test(raw) ? Number(raw) : null;
-  const liveRes = decisionId !== null ? await getVerify(decisionId) : null;
-  const res = liveRes ?? (raw === "1001" || !raw ? { data: SAMPLE_VERIFIED, live: false, error: null } : null);
+  // A verification result is only ever the API's. Inventing a tx hash or Merkle root here
+  // would render an unverified decision as cryptographically proven, which is the one thing
+  // this page must never do.
+  const res = decisionId !== null ? await getVerify(decisionId) : null;
 
   return (
     <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
@@ -64,8 +33,8 @@ export default async function VerifyPage({ searchParams }: { searchParams: Promi
             Decision ID / Hash Key
             <input
               name="id"
-              defaultValue={raw || "1001"}
-              placeholder="e.g. 1001"
+              defaultValue={raw}
+              placeholder="Decision ID from the risk log"
               inputMode="numeric"
               autoComplete="off"
               className={`${inputClass} mt-1.5 font-mono text-sm bg-[#05050A] border-[#231F42] focus:border-[#7C3AED]`}
@@ -80,30 +49,20 @@ export default async function VerifyPage({ searchParams }: { searchParams: Promi
           </button>
         </form>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-[#64748B]">Quick presets:</span>
-          {[
-            { id: "1001", label: "#1001 (NVDA Margin Cut)" },
-            { id: "1042", label: "#1042 (SMCI Gap Buffer)" },
-            { id: "1043", label: "#1043 (GME Freeze Guard)" },
-          ].map((preset) => (
-            <Link
-              key={preset.id}
-              href={`/verify?id=${preset.id}`}
-              className="px-2.5 py-1 rounded-md bg-[#121024] border border-[#231F42] hover:border-[#7C3AED]/50 text-[#C4B5FD] font-mono text-[11px] transition-colors"
-            >
-              {preset.label}
-            </Link>
-          ))}
-        </div>
+        <p className="mt-4 text-xs text-[#64748B]">
+          Decision IDs come from the risk log. Open any decision on the{" "}
+          <Link href="/" className="text-[#C4B5FD] hover:underline">book console</Link> or a
+          <Link href="/tonight" className="text-[#C4B5FD] hover:underline"> tonight briefing</Link>{" "}
+          and use its Verify link — anchoring runs at 20:00 ET, so decisions from today may not be on-chain yet.
+        </p>
       </GlowingCard>
 
-      {res && (res.data ? <Result r={res.data} isPreview={!res.live} /> : <Banner tone="danger" icon="!" title="Live verification is unavailable" body={res.error ?? "The API did not return a verification result."} />)}
+      {res && (res.data ? <Result r={res.data} /> : <Banner tone="danger" icon="!" title="Live verification is unavailable" body={res.error ?? "The API did not return a verification result."} />)}
     </div>
   );
 }
 
-function Result({ r, isPreview = false }: { r: VerifyResult; isPreview?: boolean }) {
+function Result({ r }: { r: VerifyResult }) {
   if (!r.found) {
     return <Banner tone="danger" icon="✕" title={`Decision #${r.decision_id} not found`} body={r.error ?? "The decision log has no entry with this ID."} />;
   }
@@ -121,12 +80,6 @@ function Result({ r, isPreview = false }: { r: VerifyResult; isPreview?: boolean
   const d = r.decision;
   return (
     <div className="space-y-6 relative z-20">
-      {isPreview && (
-        <div className="p-3 rounded-xl bg-[#7C3AED]/15 border border-[#7C3AED]/30 flex items-center justify-between text-xs text-[#C4B5FD]">
-          <span>Cryptographic Simulation Preview: Validated against MochaAnchor.sol ABI</span>
-          <StatusBadge tone="safe">Keccak-256 Validated</StatusBadge>
-        </div>
-      )}
 
       <Banner
         tone={r.valid ? "safe" : "danger"}
@@ -151,6 +104,27 @@ function Result({ r, isPreview = false }: { r: VerifyResult; isPreview?: boolean
         }
       />
 
+      {r.plain_proof && (
+        <GlowingCard>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-[#94A3B8] mb-2">
+            What this proof actually means
+          </div>
+          <p className="text-sm font-semibold text-white">{r.plain_proof.headline}</p>
+          <p className="mt-2 text-xs leading-relaxed text-[#CBD5E1]">{r.plain_proof.why}</p>
+        </GlowingCard>
+      )}
+
+      {r.plain && (
+        <GlowingCard>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-[#94A3B8] mb-2">
+            Why this decision was made
+          </div>
+          <p className="text-sm font-semibold text-white">{r.plain.headline}</p>
+          <p className="mt-2 text-xs leading-relaxed text-[#CBD5E1]">{r.plain.why}</p>
+          {r.plain.next && <p className="mt-2 text-xs leading-relaxed text-[#A78BFA]">{r.plain.next}</p>}
+        </GlowingCard>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-2">
         {d && (
           <GlowingCard>
@@ -174,7 +148,7 @@ function Result({ r, isPreview = false }: { r: VerifyResult; isPreview?: boolean
               <dd className="text-white">{pct(d.adverse_move)}</dd>
               <dt className="text-[#94A3B8]">Qty to Reduce</dt>
               <dd className="text-[#A78BFA]">{d.qty_to_reduce ? `${shares(d.qty_to_reduce)} sh` : "–"}</dd>
-              <dt className="text-[#94A3B8]">Engine Reason</dt>
+              <dt className="text-[#94A3B8]">Engine detail</dt>
               <dd className="font-sans text-xs text-[#CBD5E1]">
                 <Mono>{d.reason}</Mono>
               </dd>
